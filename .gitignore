@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.venv/
+release-assets/
+# fetched for the end-to-end tests by tools/fetch_mango.py, not part of this repository
+custom_components/mango_tuya_local/

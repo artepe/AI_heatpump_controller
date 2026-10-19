@@ -1,0 +1,48 @@
+# Mango COP-tekoäly: kaikki asetukset oletusarvoineen. Kaikki on valinnaista;
+# pelkkä rivi "mango_cop_ai:" riittää, jos anturien nimet ovat samat.
+mango_cop_ai:
+  tila: Tarkkailu                 # vain ensimmäinen käynnistys
+  anturit:                        # vaihda, jos nimesi ovat toiset
+    sahko: sensor.invt_pout_power
+    nopeus: sensor.hp_running_speed
+    hoyrystyminen: sensor.kylmaaine_haihdutuksen_kyllastyslampo_evap_sat
+    lauhtuminen: sensor.kylmaaine_lauhdutuksen_kyllastyslampo_cond_sat
+    imukaasu: sensor.kylmaaine_imukaasu_suction
+    kuumakaasu: sensor.kylmaaine_puristuskaasu_discharge
+    eev: sensor.eev_main_opening
+    tulistus: sensor.hp_main_eev_superheat_actual
+    tulistus_tavoite: sensor.hp_subcool_superheat_controller
+    ulko: sensor.ouman_outdoor_temperature
+    ulko_varalla: sensor.ulkolampotila
+    menovesi: sensor.lampopumppu_menovesi
+    paluuvesi: sensor.lampopumppu_paluuvesi
+    vesilampo: sensor.hp_lampoteho_laskettu
+    huurre: sensor.vilp_huurre_cop_havio
+    kompressori: binary_sensor.hp_m0_kompressori_rele
+    sulatus: binary_sensor.hp_defrost_active
+    vastus: binary_sensor.hp_electric_heater
+  vikatilat:                      # mikä tahansa päällä = palautus ja 24 h tauko
+    - binary_sensor.hp_fault_active
+    - binary_sensor.hp_serious_alarm
+    - binary_sensor.hp_fault_low_pressure
+    - binary_sensor.hp_fault_high_pressure
+    - binary_sensor.hp_fault_discharge_temperature_high
+  asetukset:
+    kirjoituksia_vrk: 12          # parametrikirjoituksia vuorokaudessa
+    varmistus_min: 60             # tasaisia minuutteja ennen kuin muutos hyväksytään
+    ikkuna_min: 45                # tasaista käyntiä ennen päätöstä
+    kuumakaasu_max: 100           # °C, tätä kuumempi kaasu peruu muutoksen
+    min_od_askel: 2               # %
+    min_od_alaraja: 8             # %
+    min_od_max_lasku: 8           # % alkuperäisestä
+    sv_askel: 5                   # 0,1 K
+    sv_max_nosto: 30              # 0,1 K alkuperäisestä
+    sv_ylaraja: 60                # 0,1 K
+    saada_min_od: true
+    saada_sv: true
+    poikkeama_raja: 10            # % COP-varoitukseen
+    cop_lahde: kylmapiiri         # tai vesipuoli: kumpi COP näytetään anturissa
+    vesipuolen_kerroin: 1.0       # esim. 0.62, jos virtaus näyttää 1,6-kertaisesti
+    kuivan_imun_hyotysuhde: 0.70  # lähtöarvo, kunnes kuiva taso on opittu
+    markyysraja: 0.15             # märkä, kun näennäinen hyötysuhde > kuiva taso + tämä
+    # eev_askeleet: 500           # askeleita 100 %:ssa; oletuksena luetaan M.EEV Max stepistä

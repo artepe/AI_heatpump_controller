@@ -1,0 +1,41 @@
+type: vertical-stack
+cards:
+  - type: entities
+    title: COP-tekoäly
+    state_color: true
+    entities:
+      - entity: select.cop_tekoaly_tila
+        name: Tila
+      - entity: sensor.cop_tekoaly_tilanne
+        name: Tilanne
+      - entity: sensor.cop_tekoaly_diagnoosi
+        name: Diagnoosi
+      - entity: sensor.cop_tekoaly_cop
+        name: COP (tunti, kylmäpiiri)
+      - entity: sensor.cop_tekoaly_cop_poikkeama
+        name: Poikkeama opitusta
+      - entity: sensor.cop_tekoaly_naennainen_hyotysuhde
+        name: Näennäinen hyötysuhde (märkä > 85 %)
+      - entity: sensor.cop_tekoaly_kirjoitukset_24_h
+        name: Kirjoitukset 24 h
+      - type: buttons
+        entities:
+          - entity: button.cop_tekoaly_hyvaksy_ehdotus
+            name: Hyväksy
+          - entity: button.cop_tekoaly_hylkaa_ehdotus
+            name: Hylkää
+          - entity: button.cop_tekoaly_palauta_alkuperaiset
+            name: Palauta
+  - type: history-graph
+    title: Imukaasu ja EEV
+    hours_to_show: 24
+    entities:
+      - entity: sensor.cop_tekoaly_naennainen_hyotysuhde
+        name: Näennäinen hyötysuhde
+      - entity: sensor.eev_main_opening
+        name: EEV-avaus
+  - type: logbook
+    title: Tekoälyn päätökset
+    hours_to_show: 72
+    target:
+      entity_id: sensor.cop_tekoaly_tilanne

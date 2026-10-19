@@ -1,0 +1,11 @@
+{
+  "domain": "mango_cop_ai",
+  "name": "Mango COP-tekoäly",
+  "after_dependencies": ["mango_tuya_local", "persistent_notification"],
+  "codeowners": ["@artepe"],
+  "documentation": "https://github.com/artepe/AI_heatpump_controller",
+  "iot_class": "calculated",
+  "issue_tracker": "https://github.com/artepe/AI_heatpump_controller/issues",
+  "requirements": [],
+  "version": "1.0.0"
+}

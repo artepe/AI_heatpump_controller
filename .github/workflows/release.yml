@@ -1,0 +1,42 @@
+name: Release
+on:
+  push:
+    branches: [main]
+    paths:
+      - custom_components/mango_cop_ai/manifest.json
+      - .github/workflows/release.yml
+permissions:
+  contents: read
+concurrency:
+  group: ai-heatpump-release
+  cancel-in-progress: false
+jobs:
+  validate:
+    uses: ./.github/workflows/tests.yml
+  publish:
+    needs: validate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.14'
+      - name: Package release
+        run: python tools/package_release.py
+      - name: Publish tested beta
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          VERSION="$(python -c 'import json; print(json.load(open("custom_components/mango_cop_ai/manifest.json"))["version"])')"
+          TAG="v${VERSION}"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists; retaining its tag and assets."
+          else
+            gh release create "$TAG" release-assets/* \
+              --target "$GITHUB_SHA" --prerelease \
+              --title "$TAG - AI Heat Pump Controller (beta)" \
+              --notes-file RELEASE_NOTES.md
+          fi

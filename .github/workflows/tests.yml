@@ -1,0 +1,21 @@
+name: Tests
+on:
+  push:
+  pull_request:
+  workflow_call:
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.14'
+          cache: pip
+      - run: pip install -r requirements-test.txt
+      - run: ruff check custom_components/mango_cop_ai tests tools
+      - name: Fetch Mango Tuya Local for the end-to-end tests
+        run: python tools/fetch_mango.py
+      - run: pytest -q
