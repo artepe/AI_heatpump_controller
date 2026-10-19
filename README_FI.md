@@ -19,6 +19,7 @@ Home Assistantin integraatio, joka toimii Raspberry Pi:llä HA:n sisällä. Se v
 
 3. Kehittäjätyökalut → YAML → Tarkista asetukset, ja käynnistä HA uudelleen.
 4. Lisää kojelautaan [`examples/kortti.yaml`](examples/kortti.yaml): Muokkaa kojelautaa → Lisää kortti → Manuaalinen → liitä. Zip-paketissa sama kortti on integraation kansiossa nimellä `kortti.yaml`.
+   Teknisempi kortti on [`examples/kortti_tekninen.yaml`](examples/kortti_tekninen.yaml): COP kummaltakin puolelta, imun märkyys, käynnissä oleva toimenpide, EEV:n 9 vyöhykkeen taulukko tekoälyn muutoksineen, kylmäpiirin arvot, käyrät ja päätöshistoria. Fontti on tasalevyinen, jos card-mod on asennettu.
 
 Mango Tuya Local -integraation pitää olla asennettuna ja parametrien näkyvissä. Tekoäly löytää number-entiteetit itse niiden tunnisteista, joten entiteetti-id:itä ei tarvitse kirjoittaa.
 
