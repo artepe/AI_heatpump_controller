@@ -1,10 +1,12 @@
-"""Mango COP AI: watches the heat pump's COP and tunes the EEV tables through Mango Tuya Local.
+"""Mango COP AI: watches the heat pump's COP, tunes the EEV tables through Mango Tuya Local and
+decides when the outdoor coil needs a defrost.
 
 Configured in configuration.yaml. The minimum is one line:
 
     mango_cop_ai:
 
-which starts in observe mode (Tarkkailu) with the owner's entity names. See README_FI.md.
+which starts both the EEV and the defrost control in observe mode (Tarkkailu) with the owner's
+entity names. See README_FI.md.
 """
 
 from __future__ import annotations
@@ -51,6 +53,14 @@ SETTING_KEYS = {
     "eev_askeleet": ("eev_full_steps", vol.All(vol.Coerce(int), vol.Range(min=100, max=9000))),
     "saada_min_od": ("enable_min_od", cv.boolean),
     "saada_sv": ("enable_sv", cv.boolean),
+    "huurrekynnys": ("frost_target_k", vol.All(vol.Coerce(float), vol.Range(min=1.5, max=10))),
+    "puhdas_kenno": ("frost_clean_k", vol.All(vol.Coerce(float), vol.Range(min=0.3, max=3))),
+    "sulatusvali_askel": ("dfr_step", vol.All(vol.Coerce(int), vol.Range(min=1, max=15))),
+    "sulatusvali_max_nosto": ("dfr_max_raise", vol.All(vol.Coerce(int), vol.Range(min=0, max=90))),
+    "sulatusvali_max_lasku": ("dfr_max_lower", vol.All(vol.Coerce(int), vol.Range(min=0, max=60))),
+    "sulatusvali_ylaraja": ("dfr_abs_max", vol.All(vol.Coerce(int), vol.Range(min=20, max=255))),
+    "sulatusvali_alaraja": ("dfr_abs_min", vol.All(vol.Coerce(int), vol.Range(min=10, max=120))),
+    "saada_sulatus": ("enable_defrost", cv.boolean),
 }
 
 CONFIG_SCHEMA = vol.Schema(
@@ -60,6 +70,8 @@ CONFIG_SCHEMA = vol.Schema(
             vol.Schema(
                 {
                     vol.Optional("tila", default=MODE_OBSERVE): vol.In(MODES),
+                    vol.Optional("sulatus_tila", default=MODE_OBSERVE): vol.In(MODES),
+                    vol.Optional("pakkosulatus"): cv.entity_id,
                     vol.Optional("anturit", default={}): vol.Schema(
                         {vol.Optional(k): cv.entity_id for k in DEFAULT_SENSORS}
                     ),
@@ -88,5 +100,5 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     runner.async_start()
     for platform in PLATFORMS:
         hass.async_create_task(async_load_platform(hass, platform, DOMAIN, {}, config))
-    _LOGGER.info("Mango COP-tekoäly käynnistyi tilassa %s", runner.brain.mode)
+    _LOGGER.info("Mango COP-tekoäly käynnistyi: EEV %s, sulatus %s", runner.brain.mode, runner.brain.defrost.mode)
     return True

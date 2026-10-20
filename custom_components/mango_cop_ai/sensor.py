@@ -65,6 +65,57 @@ def _cop_attrs(runner):
     }
 
 
+def _need(runner):
+    v = runner.brain.defrost.view.get("need")
+    return None if v is None else round(v)
+
+
+def _need_attrs(runner):
+    v = runner.brain.defrost.view
+    ref = v.get("ref") or {}
+    return {
+        "kenno": v.get("state"),
+        "huurre_k": _r(v.get("frost"), 2),
+        "huurre_lamelli_k": _r(v.get("frost_fin"), 2),
+        "cop_häviö_pros": _r(None if v.get("loss") is None else v["loss"] * 100, 1),
+        "käynti_sulatuksesta_min": _r(v.get("run"), 0),
+        "arvio_sulatustarpeeseen_min": _r(v.get("eta"), 0),
+        "oma_huurrekynnys_k": _r(v.get("target"), 1),
+        "puhdas_lähestymä_k": _r(ref.get("appr"), 2),
+        "viite_nopeus": _r(ref.get("rps"), 1),
+        "säätimen_huurre_ero_k": _r(v.get("excess"), 1),
+        "kaista": v.get("band"),
+        "pakkosulatus_estetty": v.get("blocked"),
+        "pakkosulatus_skripti": runner.force_entity(),
+    }
+
+
+def _defrost_attrs(runner):
+    d = runner.brain.defrost
+    st = d.status()
+    return {
+        "tila": st["mode"],
+        "toimenpide": st["action"],
+        "tekisi": st["suggestion"],
+        "viimeisimmät": [{
+            "aika": _ts(r["t"]), "kesto_s": r["dur"], "käynti_min": r["run"], "ulko": r["t_air"],
+            "kaista": r["band"], "huurre_k": r["frost"], "arvio": r["verdict"], "syy": r["why"],
+            "laukaisi": r["trigger"], "kwh": r["e_def"]} for r in st["records"]],
+        "sulatuksia_24h": st["count_24h"],
+        "tekoälyn_sulatuksia_24h": st["forced_24h"],
+        "arviot_24h": st["verdicts_24h"],
+        "sulatusenergia_24h_kwh": st["energy_24h"],
+        "kaistat_7vrk": st["stats"],
+        "sulatusväli_kaistoittain": st["binding"],
+        "säätimen_sulatusparametrit": st["params"],
+        "muutetut_sulatusvälit": st["changed"],
+        "suositukset": st["recommendations"],
+        "oma_huurrekynnys_k": _r(st["target"], 1),
+        "pakkosulatus_skripti": runner.force_entity(),
+        "pakkosulatus_tauolla_asti": _ts(st["force_block"]),
+    }
+
+
 def _primary(runner, kp, w):
     c = runner.brain.cop
     return c.get(kp if c.get("basis", "kylmapiiri") == "kylmapiiri" else w)
@@ -88,14 +139,18 @@ SENSORS: list[tuple[str, str, str, str | None, Callable, Callable | None]] = [
                 "märkäraja_pros": _r(r.brain.wet_eta * 100, 1)}),
     ("kirjoitukset_24h", "COP-tekoäly kirjoitukset 24 h", "mdi:counter", None,
      lambda r: r.brain._writes_24h(), lambda r: {"yhteensä": r.brain.writes_total}),
+    ("sulatustarve", "COP-tekoäly sulatustarve", "mdi:snowflake-alert", PERCENTAGE, _need, _need_attrs),
+    ("sulatus", "COP-tekoäly sulatus", "mdi:snowflake-melt", None,
+     lambda r: r.brain.defrost.status_text()[:250], _defrost_attrs),
 ]
+TEXT_SENSORS = ("tilanne", "diagnoosi", "sulatus")
 
 
 async def async_setup_platform(hass, config, async_add_entities, discovery_info=None):
     if discovery_info is None:
         return
     runner = hass.data[DOMAIN]
-    async_add_entities((StatusSensor if spec[0] in ("tilanne", "diagnoosi") else AiSensor)(runner, *spec)
+    async_add_entities((StatusSensor if spec[0] in TEXT_SENSORS else AiSensor)(runner, *spec)
                        for spec in SENSORS)
 
 
@@ -138,4 +193,8 @@ class StatusSensor(AiSensor):
         "puuttuvat_entiteetit", "mango_parametrit_löytyi", "mango_parametrit_saatavilla", "koodi",
         "näennäinen_hyötysuhde", "märkänä",
         "eev_askeleet",
+        "viimeisimmät", "sulatuksia_24h", "tekoälyn_sulatuksia_24h", "arviot_24h",
+        "sulatusenergia_24h_kwh", "kaistat_7vrk", "sulatusväli_kaistoittain", "säätimen_sulatusparametrit",
+        "muutetut_sulatusvälit", "suositukset", "oma_huurrekynnys_k", "pakkosulatus_skripti",
+        "pakkosulatus_tauolla_asti",
     })

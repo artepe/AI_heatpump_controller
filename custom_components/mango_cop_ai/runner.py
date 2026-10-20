@@ -20,17 +20,16 @@ from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 
 from .analysis import Sample, Settings, median
-from .brain import Brain, Dismiss, Log, Notify, Param, Write
+from .brain import Brain, Dismiss, Force, Log, Notify, Param, Write
 from .const import (
+    ALL_PARAMETERS,
+    DEFAULT_FORCE_SCRIPT,
     DEFAULT_SENSORS,
     DOMAIN,
-    EEV_MAX_STEP,
     MANGO_DOMAIN,
-    MIN_OD,
     NAME,
     PARAMETER_IDS,
     SIGNAL_UPDATE,
-    SV,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -58,7 +57,8 @@ class Runner:
         self.sensors = {**DEFAULT_SENSORS, **conf.get("anturit", {})}
         self.faults = list(conf.get("vikatilat", []))
         self.overrides = dict(conf.get("parametrit", {}))
-        self.brain = Brain(settings, stored, mode=conf.get("tila"))
+        self.force_script: str | None = conf.get("pakkosulatus")
+        self.brain = Brain(settings, stored, mode=conf.get("tila"), defrost_mode=conf.get("sulatus_tila"))
         self.store = store
         self.lock = asyncio.Lock()
         self._entities: dict[str, str] = {}
@@ -124,12 +124,17 @@ class Runner:
     async def async_rollback(self) -> None:
         await self._command(lambda ts: self.brain.rollback_all(ts, "käyttäjä"))
 
+    async def async_set_defrost_mode(self, mode: str) -> None:
+        await self._command(lambda ts: self.brain.set_defrost_mode(mode, ts))
+
     async def _execute(self, cmds: list) -> None:
         for _ in range(25):
-            writes = []
+            writes, forces = [], []
             for c in cmds:
                 if isinstance(c, Write):
                     writes.append(c)
+                elif isinstance(c, Force):
+                    forces.append(c)
                 elif isinstance(c, Log):
                     self._log(c.message)
                 elif isinstance(c, Notify):
@@ -138,9 +143,12 @@ class Runner:
                     )
                 elif isinstance(c, Dismiss):
                     persistent_notification.async_dismiss(self.hass, f"{DOMAIN}_{c.tag}")
-            if not writes:
+            if not writes and not forces:
                 return
             cmds = []
+            for f in forces:
+                ok, error = await self._run_force(f)
+                cmds += self.brain.force_result(ok, error, dt_util.utcnow().timestamp())
             for w in writes:
                 ok, error = await self._write(w)
                 ts = dt_util.utcnow().timestamp()
@@ -171,9 +179,37 @@ class Runner:
                 return entry.entity_id
         return None
 
+    def force_entity(self) -> str | None:
+        """The forced defrost script: configured, the default name, or a script called "Sulatus pakotettu"."""
+        get = self.hass.states.get
+        if self.force_script:
+            return self.force_script if get(self.force_script) is not None else None
+        if get(DEFAULT_FORCE_SCRIPT) is not None:
+            return DEFAULT_FORCE_SCRIPT
+        for st in self.hass.states.async_all("script"):
+            name = str(st.attributes.get("friendly_name") or st.entity_id).lower()
+            if "sulatus" in name and "pakot" in name:
+                return st.entity_id
+        return None
+
+    async def _run_force(self, f: Force) -> tuple[bool, str | None]:
+        eid = self.force_entity()
+        if eid is None:
+            return False, "pakkosulatusskriptiä ei löydy"
+        try:
+            await self.hass.services.async_call("script", "turn_on", {"entity_id": eid}, blocking=True)
+        except (HomeAssistantError, vol.Invalid, ValueError) as err:
+            _LOGGER.warning("Mango COP-tekoäly: pakkosulatus %s epäonnistui: %s", eid, err)
+            return False, str(err)[:200]
+        except Exception as err:  # noqa: BLE001 - report every failure to the brain
+            _LOGGER.exception("Mango COP-tekoäly: odottamaton virhe pakkosulatuksessa %s", eid)
+            return False, f"odottamaton virhe: {err}"[:200]
+        _LOGGER.info("Mango COP-tekoäly: pakkosulatus %s (%s)", eid, f.reason)
+        return True, None
+
     def _params(self) -> dict[str, Param]:
         out = {}
-        for key in [*MIN_OD, *SV, EEV_MAX_STEP]:
+        for key in ALL_PARAMETERS:
             eid = self.entity_for(key)
             st = self.hass.states.get(eid) if eid else None
             if st is None or st.state in BAD:
@@ -255,6 +291,13 @@ class Runner:
             missing.append(s.get("sahko"))
         fault = any((st := get(eid)) is not None and st.state == "on" for eid in self.faults)
         heater_state = get(s["vastus"]) if s.get("vastus") else None
+        flow = num("virtaus")
+        flow_st = get(s["virtaus"]) if s.get("virtaus") else None
+        if flow is not None and flow_st is not None:
+            unit = str(flow_st.attributes.get("unit_of_measurement") or "").lower()
+            flow *= 1000 if unit in ("m³/h", "m3/h") else 60 if unit in ("l/min", "lpm") else 1
+        force_eid = self.force_entity()
+        force_st = get(force_eid) if force_eid else None
         sample = Sample(
             t=ts, p_el=p_el, rps=num("nopeus"), te=num("hoyrystyminen"), tc=num("lauhtuminen"),
             t_suc=num("imukaasu"), t_dis=num("kuumakaasu"), eev=num("eev"),
@@ -264,6 +307,10 @@ class Runner:
             heater=heater_state is not None and heater_state.state == "on",
             comp_on_min=minutes_since(comp) if comp_on else None,
             since_defrost_min=None if dfr is None or dfr.state in BAD else (0.0 if defrost else minutes_since(dfr)),
+            t_fin=num("lamelli"), t_amb=num("ulkoyksikko"), ffd=num("huurteeton_ero"), flow=flow,
+            fan=num("puhallin"),
+            defrost_changed=None if dfr is None or dfr.state in BAD else dfr.last_changed.timestamp(),
+            force_ok=force_st is not None and force_st.state not in BAD,
             missing=tuple(m for m in missing if m),
         )
         self.missing = [eid for eid in [*self.sensors.values(), *self.faults] if eid and get(eid) is None]

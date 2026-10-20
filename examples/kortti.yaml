@@ -18,6 +18,14 @@ cards:
         name: Näennäinen hyötysuhde (märkä > 85 %)
       - entity: sensor.cop_tekoaly_kirjoitukset_24_h
         name: Kirjoitukset 24 h
+      - type: section
+        label: Sulatus
+      - entity: select.cop_tekoaly_sulatustila
+        name: Sulatustila
+      - entity: sensor.cop_tekoaly_sulatustarve
+        name: Sulatustarve (100 % = sulata)
+      - entity: sensor.cop_tekoaly_sulatus
+        name: Viimeisin sulatus
       - type: buttons
         entities:
           - entity: button.cop_tekoaly_hyvaksy_ehdotus
@@ -34,6 +42,14 @@ cards:
         name: Näennäinen hyötysuhde
       - entity: sensor.eev_main_opening
         name: EEV-avaus
+  - type: history-graph
+    title: Huurre ja sulatukset
+    hours_to_show: 24
+    entities:
+      - entity: sensor.cop_tekoaly_sulatustarve
+        name: Sulatustarve
+      - entity: binary_sensor.hp_defrost_active
+        name: Sulatus
   - type: logbook
     title: Tekoälyn päätökset
     hours_to_show: 72

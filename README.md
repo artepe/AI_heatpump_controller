@@ -3,17 +3,17 @@
 [![Tests](https://github.com/artepe/AI_heatpump_controller/actions/workflows/tests.yml/badge.svg?branch=main)](https://github.com/artepe/AI_heatpump_controller/actions/workflows/tests.yml)
 
 A Home Assistant integration (`mango_cop_ai`, "Mango COP-tekoäly") that watches the COP of an
-R290 air-to-water heat pump every minute and tunes its electronic expansion valve when the data
-show a fault it can correct. It runs inside Home Assistant, for example on a Raspberry Pi, and
+R290 air-to-water heat pump every minute, tunes its electronic expansion valve when the data
+show a fault it can correct, and decides when the outdoor coil needs a defrost. It runs inside Home Assistant, for example on a Raspberry Pi, and
 writes parameters only through the [Mango Tuya Local](https://github.com/artepe/chinaheatpump-tuya-local-home-assistant)
 integration (Mango Energy monoblocks, 770-parameter Tuya profile).
 
 [Suomenkielinen ohje](README_FI.md)
 
-**Version 1.0.0 beta.** Tested against a real Home Assistant core and the real Mango Tuya Local
-integration over its simulated Tuya transport, with a simulated heat pump. It has not yet been
-validated on a physical unit, and write permissions for the two parameter tables it uses have
-not yet been confirmed on a device.
+**Version 1.1.0 beta.** Tested against a real Home Assistant core and the real Mango Tuya Local
+integration over its simulated Tuya transport, with a simulated heat pump. The EEV writes have
+been confirmed on a physical unit (Heat Sv5 changed the controller's superheat target as
+expected); the defrost control has not yet run on a physical unit.
 
 ## What it does
 
@@ -42,11 +42,26 @@ not yet been confirmed on a device.
   harm appeared: discharge gas above 100 °C, a starving evaporator, a hunting EEV, or suction
   turning wet again.
 
-It never touches tank temperature, defrost, compressor speeds, fan, pump or protections.
+- **Defrosts on demand.** Frost is measured continuously as the growth of the evaporator
+  approach (coil air − evaporating temperature) from the clean-coil level after each defrost,
+  scaled with compressor and fan speed. When it reaches the AI's threshold (4 K to start with,
+  self-calibrating 2.5–8 K from how long the melts take), the AI starts a defrost with the
+  owner's forced-defrost script. Every defrost is judged (turha = needless, sopiva = right,
+  myöhäinen = late, kesken = incomplete) together with what started it, and the controller's
+  own interval (`Dfr.Interval` / `Dfr.Inte. 1–5`, the one that actually started the defrosts) is
+  lengthened after repeated defrosts on a clean coil or shortened after late ones, each step
+  verified by the following defrosts.
+
+It never touches tank temperature, compressor speeds, fan, pump, protections or the defrost
+temperature thresholds.
 
 ## Safety
 
-- **Only two tables are writable:** `Heat Min OD1–9` and `Heat Sv1–9`.
+- **Only these parameters are writable:** `Heat Min OD1–9`, `Heat Sv1–9`, `Dfr.Interval` and
+  `Dfr.Inte. 1–5`. The forced-defrost script is the only other action.
+  - Defrost interval: 5 min steps, at most +30 / −15 min from the original, always 30–120 min.
+  - Forced defrosts: at least 25 compressor minutes apart, air at most +8 °C, at most 24 a day;
+    two that do not start pause them for a day.
   - Heat Min OD: 2 % steps, at most 8 % below the original value, never below 8 %.
   - Heat Sv: 0.5 K steps, at most 3 K above the original value, never above 6 K.
   - A value only ever moves away from its original and back, never past it.
@@ -78,7 +93,11 @@ selected mode survives restarts.
 | Automaattinen (automatic) | Acts, verifies and undoes changes by itself. |
 | Pois (off) | Does nothing; a trial in progress is restored. |
 
-**Palauta alkuperäiset** restores every value the AI changed and returns to observe mode.
+The defrost control has its own mode, `select.cop_tekoaly_sulatustila`, with the same options;
+it also starts in observe mode.
+
+**Palauta alkuperäiset** restores every value the AI changed, defrost intervals included, and
+returns both modes to observe.
 
 ## Installation
 
@@ -115,6 +134,9 @@ dashboard card is in [examples/kortti.yaml](examples/kortti.yaml).
 | `sensor.cop_tekoaly_cop_laatuaste` | COP / Carnot COP, % |
 | `sensor.cop_tekoaly_naennainen_hyotysuhde` | Apparent compressor efficiency, % (wet suction indicator) |
 | `sensor.cop_tekoaly_kirjoitukset_24_h` | Parameter writes in the last 24 h |
+| `select.cop_tekoaly_sulatustila` | Defrost control mode |
+| `sensor.cop_tekoaly_sulatustarve` | Frost as % of the AI's defrost threshold (100 % = defrost now) |
+| `sensor.cop_tekoaly_sulatus` | Verdict of the last defrost. Attributes: last 10 defrosts, 24 h counts, 7-day band statistics, controller defrost parameters, changed intervals, recommendations. |
 | `button.cop_tekoaly_hyvaksy_ehdotus`, `_hylkaa_ehdotus`, `_palauta_alkuperaiset` | Approve, reject, restore |
 
 ## Development
@@ -132,8 +154,11 @@ The tests cover:
 - the R290 property fits against CoolProp;
 - the decision core, minute by minute, against a simulated heat pump with hidden zone tables,
   an EEV superheat controller, wet suction, defrosts and oil-return boosts;
+- the defrost control against a simulated controller that defrosts from the Mango defrost
+  parameters, with weather-dependent frost, fan and speed changes and a forced-defrost script;
 - end-to-end runs in a real Home Assistant core: observe, propose, automatic, rollback, fault,
-  refused writes, restarts, frozen data and YAML settings.
+  refused writes, restarts, frozen data, YAML settings, forced defrost through a script and a
+  defrost interval written through Mango.
 
 ## License
 

@@ -1,7 +1,7 @@
 """Build release-assets/mango_cop_ai_<version>.zip for manual installation.
 
 The zip unpacks into the Home Assistant config folder as custom_components/mango_cop_ai/, with the
-Finnish guide and the dashboard card inside the integration folder.
+Finnish guide and both dashboard cards inside the integration folder.
 """
 
 from __future__ import annotations
@@ -12,7 +12,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = ROOT / "custom_components" / "mango_cop_ai"
-EXTRAS = {ROOT / "README_FI.md": "README_FI.md", ROOT / "examples" / "kortti.yaml": "kortti.yaml"}
+EXTRAS = {ROOT / "README_FI.md": "README_FI.md", ROOT / "examples" / "kortti.yaml": "kortti.yaml",
+          ROOT / "examples" / "kortti_tekninen.yaml": "kortti_tekninen.yaml"}
 
 
 def main() -> None:

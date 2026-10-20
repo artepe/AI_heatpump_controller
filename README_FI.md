@@ -1,16 +1,17 @@
 # Mango COP-tekoäly (AI Heat Pump Controller)
 
-Home Assistantin integraatio, joka toimii Raspberry Pi:llä HA:n sisällä. Se vahtii VILP:n COP:ia minuutin välein ja säätää EEV:tä Mango Tuya Local -integraation kautta, kun data näyttää korjattavan vian.
+Home Assistantin integraatio, joka toimii Raspberry Pi:llä HA:n sisällä. Se vahtii VILP:n COP:ia minuutin välein, säätää EEV:tä Mango Tuya Local -integraation kautta, kun data näyttää korjattavan vian, ja päättää, milloin ulkoyksikön kenno sulatetaan.
 
 - **Vahtii COP:ia.** Laskee COP:n kylmäpiiristä ja vesipuolelta ja suhteuttaa sen Carnot-COP:iin (*laatuaste*). Normaalitaso opitaan erikseen jokaiselle ulkolämpö- ja kierrosluokalle. Jos COP on tunnin yli 10 % opittua matalampi, tulee ilmoitus todennäköisestä syystä: märkä imu, huurre, höyrystin, lauhdutin, kylmäainevaje, sähkövastus tai vika.
 - **Säätää vain EEV:tä.** Säädettävät parametrit ovat *Heat Min OD1–9* (EEV:n minimiavaus) ja *Heat Sv1–9* (tulistuksen tavoite). Säätö alkaa vain, kun imukaasu on märkää, ja yksi pieni askel kerrallaan.
-- **Ei koske muuhun.** Varaajan lämpötila, sulatus, kompressorin nopeudet, puhallin, pumppu ja suojaukset jäävät rauhaan.
+- **Sulattaa kennon, kun huurretta on kertynyt.** Huurteen määrä mitataan jatkuvasti, sulatus käynnistetään omalla pakkosulatusskriptilläsi, jokainen sulatus arvioidaan, ja säätimen omaa sulatusväliä säädetään. Katso [Sulatusohjaus](#sulatusohjaus).
+- **Ei koske muuhun.** Varaajan lämpötila, kompressorin nopeudet, puhallin, pumppu, suojaukset ja sulatuksen lämpötilakynnykset jäävät rauhaan.
 
 ## Asennus (HA OS, Raspberry Pi)
 
 1. Asenna integraatio jommallakummalla tavalla:
    - **HACS:** lisää `https://github.com/artepe/AI_heatpump_controller` mukautetuksi repositorioksi (tyyppi Integraatio) ja lataa **AI Heat Pump Controller**.
-   - **Käsin:** lataa `mango_cop_ai_<versio>.zip` [Releases-sivulta](https://github.com/artepe/AI_heatpump_controller/releases) ja pura se Home Assistantin `config`-kansioon niin, että syntyy kansio `config/custom_components/mango_cop_ai/`. Voit käyttää Samba-jakoa, File editoria tai Terminal & SSH -lisäosaa: `cd /config && unzip -o mango_cop_ai_1.0.0.zip`.
+   - **Käsin:** lataa `mango_cop_ai_<versio>.zip` [Releases-sivulta](https://github.com/artepe/AI_heatpump_controller/releases) ja pura se Home Assistantin `config`-kansioon niin, että syntyy kansio `config/custom_components/mango_cop_ai/`. Voit käyttää Samba-jakoa, File editoria tai Terminal & SSH -lisäosaa: `cd /config && unzip -o mango_cop_ai_1.1.0.zip`.
 2. Lisää `configuration.yaml`:n loppuun yksi rivi:
 
    ```yaml
@@ -36,7 +37,9 @@ Tila valitaan entiteetillä **COP-tekoäly tila**. Oletuksena tekoäly käynnist
 
 Suositeltu järjestys: Tarkkailu 1–2 pakkasyötä → Ehdota → Automaattinen.
 
-**Palauta alkuperäiset** kirjoittaa kaikki tekoälyn muuttamat arvot takaisin ja vaihtaa tilaksi Tarkkailu.
+Sulatusohjauksella on oma tilansa, **COP-tekoäly sulatustila**, samoilla vaihtoehdoilla. Se alkaa myös tarkkailutilassa, joten EEV-säädön voi pitää automaattisena ja katsoa sulatuksia ensin rauhassa.
+
+**Palauta alkuperäiset** kirjoittaa kaikki tekoälyn muuttamat arvot takaisin, myös sulatusvälit, ja vaihtaa molemmat tilat tarkkailuun.
 
 ## Miten päätös syntyy
 
@@ -58,13 +61,64 @@ Suositeltu järjestys: Tarkkailu 1–2 pakkasyötä → Ehdota → Automaattinen
 
 Kylmäpiirin COP-lukema laskee, kun imu kuivuu. Se johtuu siitä, että märkä imu näyttää lukeman liian suurena. Vesipuolen COP-laatuaste on silloin parempi vertailukohta, ja ilmoitukset näyttävät molemmat.
 
+## Sulatusohjaus
+
+Mangossa on 39 sulatusparametria, mutta suoraa "sulata nyt" -käskyä ei ole. Parametrien merkitys on päätelty niiden nimistä. Siksi tekoäly mittaa huurteen itse, käynnistää sulatuksen omalla pakkosulatusskriptilläsi ja kirjoittaa säätimeen vain sulatusvälejä, joiden vaikutuksen se näkee seuraavista sulatuksista.
+
+1. **Huurre mitataan jatkuvasti.**
+   - Huurre eristää kennon ja tukkii ilman kulun, joten höyrystimen lähestymä (ulkoyksikön ilma − höyrystymislämpö) kasvaa.
+   - Puhtaan kennon taso mitataan jokaisen sulatuksen jälkeen 12–60 käyntiminuutin kohdalta, tasaisella nopeudella.
+   - Taso skaalataan kompressorin ja puhaltimen nopeudella. Kasvu siitä eteenpäin on huurteen määrä kelvineinä. Mukaan lasketaan myös ennen mittausta kertynyt huurre samalla nopeudella, enintään 2,5 K.
+   - Äkillinen hyppy, esimerkiksi hiljaisen tilan puhallinmuutos, ei ole huurretta, joten se siirtää vertailutasoa.
+   - Pysyvä nopeusmuutos mitataan uudelta tasolta niin, että huurrearvio jatkuu katkeamatta.
+   - **Sulatustarve 100 %** tarkoittaa, että huurretta on tekoälyn kynnyksen verran, aluksi 4 K, eli noin 10 % COP-häviö.
+2. **Tekoäly sulattaa itse, kun tarve on 100 %.** Sulatus käynnistetään pakkosulatusskriptilläsi (`script.sulatus_pakotettu_moduuli_0`). Jos sitä ei löydy, käytetään skriptiä, jonka nimessä on "Sulatus pakotettu". Ehdot:
+   - edellisestä sulatuksesta vähintään 25 käyntiminuuttia
+   - ulkoilma enintään +8 °C
+   - tasainen käynti, ei vikaa
+   - enintään 24 pakkosulatusta vuorokaudessa
+
+   Sulatusanturin pitää mennä päälle 6 minuutissa. Jos se ei mene kahdesti, pakkosulatus on tauolla vuorokauden ja siitä tulee ilmoitus. Jos uusi sulatus alkaa heti pakkosulatuksen perään, skripti saattaa jättää pakotuksen päälle, joten sekin pysäyttää pakkosulatukset vuorokaudeksi.
+3. **Jokainen sulatus arvioidaan:**
+
+   | Arvio | Peruste |
+   |---|---|
+   | turha | Kenno oli lähes puhdas: huurretta alle 1 K ja sulatus lyhyt. Tekoälyn oma sulatus on turha, jos se kesti vain puhtaan kennon sulatusajan. |
+   | sopiva | Tältä väliltä. |
+   | myöhäinen | Huurretta 1,5 × kynnys (6 K) tai COP-häviö yli 15 %, tai sulatus kesti selvästi tavallista kauemmin. |
+   | kesken | Sulatus kesti säätimen maksimiajan (Dfr.Time) eikä lamelli lämmennyt loppulämpöön (Dfr.Coil T). |
+   | epäselvä | Puhtaan kennon tasoa ei ehditty mitata, esimerkiksi heti uudelleenkäynnistyksen jälkeen. |
+
+   Lisäksi kirjataan, mikä sulatuksen laukaisi:
+   - **tekoäly**
+   - **sulatusväli**: käyntiaika edellisestä sulatuksesta vastasi Dfr.Interval- tai kaistan Dfr.Inte. n -arvoa (+ T. Sure Time)
+   - **lämpötilaehto**
+   - **hätäsulatus**
+
+   Kaistat 1 (lämmin) … 5 (kylmä) tulevat säätimen rajoista Dfr.Env.T.1–4 ulkoyksikön omalla ulkoanturilla.
+4. **Oma kynnys kalibroituu.**
+   - Jos tekoälyn sulatus osoittautuu turhaksi, kynnys nousee 0,5 K.
+   - Jos säätimen oma sulatus on myöhäinen ennen kuin tekoäly piti sitä tarpeellisena, kynnys laskee 0,5 K.
+   - Kynnys pysyy välillä 2,5–8 K.
+5. **Säätimen sulatusväliä säädetään yksi askel kerrallaan.** Vain sitä väliä muutetaan, joka sulatukset laukaisi:
+   - **pidennys +5 min**, kun kaistan neljästä viimeisestä sulatuksesta kolme oli turhia ja saman välin laukaisemia, eikä yksikään ollut myöhäinen. Kun pakkosulatus on käytössä, tekoäly sulattaa itse, jos huurretta kertyy.
+   - **lyhennys −5 min**, kun kolmesta viimeisestä kaksi oli myöhäisiä ja odottivat väliä. Yksi riittää, jos väli on tekoälyn itse pidentämä.
+   - Muutos varmistetaan kaistan kahdesta seuraavasta sulatuksesta: välin pitää muuttua asetuksen mukana, eikä sulatus saa olla myöhäinen tai kesken. Muuten alkuperäinen palautetaan. Haitan jälkeen väliä ei kosketa kahteen viikkoon, ja jos vaikutusta ei näy, viikkoon.
+   - Rajat: enintään 30 min alkuperäistä pidempi ja 15 min lyhyempi, aina välillä 30–120 min.
+6. **Muut havainnot ovat suosituksia.** Esimerkiksi myöhään alkavat lämpötilaehdon sulatukset (Dfr.T.Diff / Frost D1) tai turhat sulatukset yli +4 °C:ssa (Dfr. Env.T). Ne näkyvät anturin `sensor.cop_tekoaly_sulatus` attribuutissa `suositukset`, eikä tekoäly kirjoita niitä.
+
+Jokainen sulatus kirjataan lokikirjaan, esimerkiksi:
+
+> Sulatus 4 min 00 s, käyntiä edellisestä 61 min, ulkona −0,6 °C (kaista 3): sopiva – huurretta 4,1 K. Tekoälyn pakkosulatus.
+
 ## Turvallisuus
 
-- **Vain kaksi taulukkoa.** Mitään muuta tekoäly ei voi kirjoittaa.
+- **Vain kaksi EEV-taulukkoa ja sulatusvälit.** Muuta tekoäly ei voi kirjoittaa: *Heat Min OD1–9*, *Heat Sv1–9*, *Dfr.Interval* ja *Dfr.Inte. 1–5*. Lisäksi se voi käynnistää pakkosulatusskriptin.
 - **Pienet askeleet ja rajat:**
   - Heat Min OD: askel 2 %, enintään 8 % alkuperäisestä alas, ei koskaan alle 8 %.
   - Heat Sv: askel 0,5 K, enintään 3 K ylös, ei koskaan yli 6 K.
   - Muutos menee aina vain alkuperäisestä poispäin ja takaisin, ei koskaan alkuperäisen ohi.
+  - Sulatusväli: askel 5 min, enintään +30 / −15 min alkuperäisestä, aina 30–120 min.
 - **Kirjoitusraja.** Enintään 12 kirjoitusta vuorokaudessa, mikä säästää ohjaimen muistia. Palautukset sallitaan aina.
 - **Vika keskeyttää.** Jos jokin vikatila-antureista on päällä (`binary_sensor.hp_fault_active`, `hp_serious_alarm`, matala- ja korkeapainevika, kuumakaasun ylilämpö), kaikki tekoälyn muuttamat arvot palautetaan ja säädöt pidetään 24 h tauolla.
 - **Käsin tehty muutos voittaa.** Jos muutat tekoälyn säätämää arvoa Mango Controlissa, tekoäly ottaa arvon uudeksi lähtökohdaksi eikä koske siihen viikkoon.
@@ -84,6 +138,9 @@ Kylmäpiirin COP-lukema laskee, kun imu kuivuu. Se johtuu siitä, että märkä 
 | `sensor.cop_tekoaly_cop_laatuaste` | COP / Carnot-COP, % |
 | `sensor.cop_tekoaly_naennainen_hyotysuhde` | Märkyyden mittari. Yli 85 % tarkoittaa märkää imua. |
 | `sensor.cop_tekoaly_kirjoitukset_24_h` | Parametrikirjoitukset viimeisen vuorokauden aikana |
+| `select.cop_tekoaly_sulatustila` | Sulatusohjauksen tila: Pois / Tarkkailu / Ehdota / Automaattinen |
+| `sensor.cop_tekoaly_sulatustarve` | Huurteen määrä, % tekoälyn kynnyksestä (100 % = sulatus nyt). Attribuutteina kennon tila, huurre K, COP-häviö, käyntiaika sulatuksesta, arvio sulatustarpeeseen ja oma kynnys. |
+| `sensor.cop_tekoaly_sulatus` | Viimeisimmän sulatuksen arvio. Attribuutteina 10 viimeistä sulatusta, 24 h luvut, kaistatilastot 7 vrk, sulatuksen laukaisseet välit, säätimen sulatusparametrit, muutetut välit ja suositukset. |
 | `button.cop_tekoaly_hyvaksy_ehdotus` / `_hylkaa_ehdotus` / `_palauta_alkuperaiset` | Ehdotuksen hyväksyntä ja hylkäys sekä kaikkien arvojen palautus |
 
 ## Asetukset
@@ -92,7 +149,9 @@ Kaikki on valinnaista. Oletukset ovat tekijän Home Assistantin entiteettien nim
 
 ```yaml
 mango_cop_ai:
-  tila: Tarkkailu                 # vain ensimmäinen käynnistys
+  tila: Tarkkailu                 # EEV-säätö, vain ensimmäinen käynnistys
+  sulatus_tila: Tarkkailu         # sulatusohjaus, vain ensimmäinen käynnistys
+  # pakkosulatus: script.sulatus_pakotettu_moduuli_0   # oletuksena tämä tai "Sulatus pakotettu" -niminen
   anturit:                        # vaihda, jos nimesi ovat toiset
     sahko: sensor.invt_pout_power
     nopeus: sensor.hp_running_speed
@@ -112,6 +171,11 @@ mango_cop_ai:
     kompressori: binary_sensor.hp_m0_kompressori_rele
     sulatus: binary_sensor.hp_defrost_active
     vastus: binary_sensor.hp_electric_heater
+    lamelli: sensor.kylmaaine_lamellilampo_fin              # sulatus: kennon lämpö
+    ulkoyksikko: sensor.hp_module_ambient_temperature      # sulatus: ulkoyksikön oma ulkoanturi
+    huurteeton_ero: sensor.hp_frost_free_coil_ambient_delta
+    virtaus: sensor.module_0_vf_water_pump_flow             # l/h, sulatuksen vedestä ottama lämpö
+    puhallin: sensor.hp_fan_1_rpm_actual
   vikatilat:                      # mikä tahansa päällä = palautus ja 24 h tauko
     - binary_sensor.hp_fault_active
     - binary_sensor.hp_serious_alarm
@@ -137,6 +201,14 @@ mango_cop_ai:
     kuivan_imun_hyotysuhde: 0.70  # lähtöarvo, kunnes kuiva taso on opittu
     markyysraja: 0.15             # märkä, kun näennäinen hyötysuhde > kuiva taso + tämä
     # eev_askeleet: 500           # askeleita 100 %:ssa; oletuksena luetaan M.EEV Max stepistä
+    saada_sulatus: true           # sulatusohjaus (pakkosulatus ja sulatusvälit)
+    huurrekynnys: 4.0             # K, tekoälyn sulatuskynnyksen lähtöarvo (kalibroituu 2,5–8 K)
+    puhdas_kenno: 1.0             # K, tätä vähemmällä huurteella sulatus oli turha
+    sulatusvali_askel: 5          # min
+    sulatusvali_max_nosto: 30     # min alkuperäisestä
+    sulatusvali_max_lasku: 15     # min alkuperäisestä
+    sulatusvali_ylaraja: 120      # min
+    sulatusvali_alaraja: 30       # min
 ```
 
 Jos jokin vikatila-anturi on normaalikäytössä päällä, poista se listalta. Muuten tekoäly pysyy tauolla.
@@ -144,6 +216,8 @@ Jos jokin vikatila-anturi on normaalikäytössä päällä, poista se listalta. 
 ## Rajoitukset
 
 - Mango-profiilissa näiden parametrien kirjoitusoikeutta ei ole vielä todennettu laitteella. Jos laite hylkää kirjoituksen, tekoäly huomaa sen ja jättää parametrin viikoksi rauhaan.
+- Sulatusparametrien merkitykset on päätelty nimistä. Tekoäly kirjoittaa vain sulatusvälejä ja vain silloin, kun on nähnyt niiden laukaisevan sulatukset. Jos väli ei muutu asetuksen mukana, muutos perutaan.
+- Pakkosulatusskriptin toiminta riippuu siitä, mitä se tekee laitteelle. Tekoäly varmistaa jokaisen pakkosulatuksen sulatusanturista.
 - Vyöhykkeiden rajat opitaan käytössä. Ensimmäinen haku samoissa oloissa voi viedä 1–9 kokeilua, jokainen 4–15 minuuttia.
 - Vesipuolen COP voi olla mittakaavaltaan vinossa (tekijän laitteistossa noin 1,6-kertainen, kunnes ΔT- tai virtausvirhe korjataan). Tekoäly vertaa sitä vain omaan aiempaan tasoonsa, joten mittakaavavirhe ei haittaa.
 - Yhteisöprojekti, ei valmistajan julkaisu. Integraatio muuttaa lämpöpumpun ohjaimen parametreja: käyttö omalla vastuulla, ja aloita aina tarkkailutilasta.

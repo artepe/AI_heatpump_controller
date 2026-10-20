@@ -2,14 +2,18 @@
 integration (simulated Tuya transport) while the simulated heat pump reads the same parameters."""
 
 from datetime import timedelta
+from pathlib import Path
 
+import yaml
 from homeassistant.components import persistent_notification
+from homeassistant.core import callback
+from homeassistant.helpers.template import Template
 from homeassistant.setup import async_setup_component
 from pytest_homeassistant_custom_component.common import MockConfigEntry, async_fire_time_changed
 
 from custom_components.mango_cop_ai.const import DOMAIN
 
-from .plant import Plant, to_states
+from .plant import DEFROST_VALUES, DFR_INTE_HW, Plant, to_states
 
 DATA = {"host": "127.0.0.1", "device_id": "TEST_DEVICE", "local_key": "0000000000000000"}
 OD6, OD5 = "5:41", "5:40"
@@ -19,6 +23,7 @@ ENTITIES = [
     "sensor.cop_tekoaly_naennainen_hyotysuhde", "sensor.cop_tekoaly_kirjoitukset_24_h",
     "button.cop_tekoaly_hyvaksy_ehdotus", "button.cop_tekoaly_hylkaa_ehdotus",
     "button.cop_tekoaly_palauta_alkuperaiset",
+    "select.cop_tekoaly_sulatustila", "sensor.cop_tekoaly_sulatustarve", "sensor.cop_tekoaly_sulatus",
 ]
 
 
@@ -75,7 +80,7 @@ async def test_observe_mode_uses_the_real_entities_and_never_writes(hass, freeze
     assert sorted(e for e in hass.states.async_entity_ids() if "cop_tekoaly" in e) == sorted(ENTITIES)
     assert rig.state("select.cop_tekoaly_tila").state == "Tarkkailu"
     status = rig.state("sensor.cop_tekoaly_tilanne")
-    assert status.attributes["mango_parametrit_löytyi"] == 19
+    assert status.attributes["mango_parametrit_löytyi"] == 43  # 19 EEV + 24 defrost parameters
     assert status.attributes["tekisi"] == "Heat Min OD 18 → 16 (aktiivinen vyöhyke)"
     assert any(m.startswith("Tarkkailu, ei muutettu mitään") for m in rig.logbook)
     assert "Imukaasu märkää" in rig.state("sensor.cop_tekoaly_diagnoosi").state
@@ -187,3 +192,97 @@ async def test_frozen_modbus_reading_stops_decisions(hass, freezer, mocked_clien
     await rig.run(2 * 60)
     assert hardware.writes == 0
     assert "sensor.eev_main_opening" in rig.state("sensor.cop_tekoaly_diagnoosi").state
+
+
+EXAMPLES = Path(__file__).parents[1] / "examples"
+
+
+def render_cards(hass) -> list[str]:
+    """Every markdown section of both dashboard cards, rendered like the frontend asks Home Assistant to."""
+    out = []
+    for name in ("kortti.yaml", "kortti_tekninen.yaml"):
+        card = yaml.safe_load((EXAMPLES / name).read_text(encoding="utf-8"))
+        for c in card["cards"]:
+            if c["type"] == "markdown":
+                out.append(Template(c["content"], hass).async_render(parse_result=False))
+    return out
+
+
+def table_rows(text: str, header: str) -> list[str]:
+    lines = text.splitlines()
+    i = lines.index(header)
+    rows = []
+    for line in lines[i + 2:]:
+        if not line.startswith("|"):
+            break
+        rows.append(line)
+    assert lines[i + 1].startswith("|:"), lines[i + 1]
+    return rows
+
+
+async def _with_script(hass, rig):
+    @callback
+    def force(call):
+        rig.plant.force()
+
+    hass.services.async_register("test", "force_defrost", force)
+    assert await async_setup_component(hass, "script", {"script": {"sulatus_pakotettu_moduuli_0": {
+        "alias": "Sulatus pakotettu (moduuli 0)", "sequence": [{"action": "test.force_defrost"}]}}})
+    await hass.async_block_till_done()
+
+
+async def test_ai_defrosts_through_the_owners_script(hass, freezer, mocked_client, hardware):
+    hardware.values.update({**DEFROST_VALUES, DFR_INTE_HW[2]: 90})  # the controller would wait 90 min
+    rig = Rig(hass, freezer, hardware, defrost_ctrl={"table": True}, t_out=lambda m: -1.0, frost_rate=4.0)
+    await _with_script(hass, rig)
+    await rig.start({"sulatus_tila": "Automaattinen"})
+    assert rig.state("select.cop_tekoaly_sulatustila").state == "Automaattinen"
+    assert rig.state("select.cop_tekoaly_tila").state == "Tarkkailu"
+    seen_need = []
+
+    def watch(r):
+        need = r.state("sensor.cop_tekoaly_sulatustarve").state
+        if need not in ("unknown", "unavailable"):
+            seen_need.append(float(need))
+        return r.plant.forced >= 2
+
+    assert await rig.run(5 * 60, until=watch)
+    assert max(seen_need) >= 100
+    assert any(m.startswith("Pakkosulatus: Kennossa on huurretta") for m in rig.logbook)
+    await rig.run(10)
+    attrs = rig.state("sensor.cop_tekoaly_sulatus").attributes
+    assert attrs["viimeisimmät"][0]["laukaisi"] == "tekoäly"
+    assert attrs["pakkosulatus_skripti"] == "script.sulatus_pakotettu_moduuli_0"
+    assert attrs["säätimen_sulatusparametrit"]["Dfr.Inte. 3"] == 90
+    assert hardware.writes == 0  # forced defrosts need no parameter writes
+    need = rig.state("sensor.cop_tekoaly_sulatustarve")
+    assert need.attributes["kenno"] in ("Puhdas", "Mittaa puhtaan kennon tasoa", "Huurtuu", "Sulatus käynnissä")
+    cards = render_cards(hass)
+    dfr = next(c for c in cards if "Sulatus · Automaattinen" in c)
+    recent = table_rows(dfr, "| aika | kesto | käynti | ulko | K | huurre | arvio | laukaisi |")
+    assert len(recent) == len(attrs["viimeisimmät"]) and "tekoäly" in recent[0]
+    bands = table_rows(dfr, "| kaista | ulko | väli | huom |")
+    assert len(bands) == 6 and bands[2].startswith("| 3 | -5…0 °C | 90 min")
+    history = next(c for c in cards if "### Päätökset" in c)
+    assert "Ei vielä päätöksiä" in history
+
+
+async def test_clean_coil_defrosts_lengthen_the_interval_through_mango(hass, freezer, mocked_client, hardware):
+    hardware.values.update({**DEFROST_VALUES, DFR_INTE_HW[4]: 35})  # band 5, short interval
+    rig = Rig(hass, freezer, hardware, defrost_ctrl={"table": True}, t_out=lambda m: -12.0, frost_rate=0.3)
+    await rig.start({"sulatus_tila": "Automaattinen"})
+    assert await rig.run(7 * 60, until=lambda r: r.hw.values[DFR_INTE_HW[4]] == 40)
+    assert hardware.writes == 1
+    assert hass.states.get("number.mango_test_defro_set_dfr_inte_5_raw").state == "40.0"
+    attrs = rig.state("sensor.cop_tekoaly_sulatus").attributes
+    assert attrs["toimenpide"]["muutos"] == "Dfr.Inte. 5 35 → 40 min"
+    assert attrs["muutetut_sulatusvälit"] == {"Dfr.Inte. 5": {"alkuperäinen": 35, "nyt": 40}}
+    assert attrs["sulatusväli_kaistoittain"] == {"5": "Dfr.Inte. 5"}
+    dfr = next(c for c in render_cards(hass) if "Sulatus · Automaattinen" in c)
+    assert "Varmistaa Dfr.Inte. 5 35 → 40 min" in dfr
+    assert table_rows(dfr, "| kaista | ulko | väli | huom |")[4] == "| 5 | ≤ -10 °C | 40 min | 35→40, ohjaa sulatuksia |"
+    await hass.services.async_call("select", "select_option",
+                                   {"entity_id": "select.cop_tekoaly_sulatustila", "option": "Tarkkailu"},
+                                   blocking=True)
+    await hass.async_block_till_done()
+    assert hardware.values[DFR_INTE_HW[4]] == 35  # the unverified trial is undone

@@ -1,7 +1,9 @@
 # Mango COP-tekoäly: kaikki asetukset oletusarvoineen. Kaikki on valinnaista;
 # pelkkä rivi "mango_cop_ai:" riittää, jos anturien nimet ovat samat.
 mango_cop_ai:
-  tila: Tarkkailu                 # vain ensimmäinen käynnistys
+  tila: Tarkkailu                 # EEV-säätö, vain ensimmäinen käynnistys
+  sulatus_tila: Tarkkailu         # sulatusohjaus, vain ensimmäinen käynnistys
+  # pakkosulatus: script.sulatus_pakotettu_moduuli_0   # oletuksena tämä tai "Sulatus pakotettu" -niminen
   anturit:                        # vaihda, jos nimesi ovat toiset
     sahko: sensor.invt_pout_power
     nopeus: sensor.hp_running_speed
@@ -21,6 +23,11 @@ mango_cop_ai:
     kompressori: binary_sensor.hp_m0_kompressori_rele
     sulatus: binary_sensor.hp_defrost_active
     vastus: binary_sensor.hp_electric_heater
+    lamelli: sensor.kylmaaine_lamellilampo_fin
+    ulkoyksikko: sensor.hp_module_ambient_temperature
+    huurteeton_ero: sensor.hp_frost_free_coil_ambient_delta
+    virtaus: sensor.module_0_vf_water_pump_flow
+    puhallin: sensor.hp_fan_1_rpm_actual
   vikatilat:                      # mikä tahansa päällä = palautus ja 24 h tauko
     - binary_sensor.hp_fault_active
     - binary_sensor.hp_serious_alarm
@@ -46,3 +53,11 @@ mango_cop_ai:
     kuivan_imun_hyotysuhde: 0.70  # lähtöarvo, kunnes kuiva taso on opittu
     markyysraja: 0.15             # märkä, kun näennäinen hyötysuhde > kuiva taso + tämä
     # eev_askeleet: 500           # askeleita 100 %:ssa; oletuksena luetaan M.EEV Max stepistä
+    saada_sulatus: true           # sulatusohjaus (pakkosulatus ja sulatusvälit)
+    huurrekynnys: 4.0             # K, sulatuskynnyksen lähtöarvo (kalibroituu 2,5–8 K)
+    puhdas_kenno: 1.0             # K, tätä vähemmällä huurteella sulatus oli turha
+    sulatusvali_askel: 5          # min
+    sulatusvali_max_nosto: 30     # min alkuperäisestä
+    sulatusvali_max_lasku: 15     # min alkuperäisestä
+    sulatusvali_ylaraja: 120      # min
+    sulatusvali_alaraja: 30       # min

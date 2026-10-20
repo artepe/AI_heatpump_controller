@@ -39,6 +39,15 @@ class Settings:
     eev_full_steps: int | None = None  # EEV steps at 100 %; None = read M.EEV Max step (fallback 500)
     enable_min_od: bool = True
     enable_sv: bool = True
+    # defrost
+    frost_target_k: float = 4.0  # K evaporator approach growth = defrost clearly worthwhile (100 %)
+    frost_clean_k: float = 1.0  # K, a defrost started below this growth found an almost clean coil
+    dfr_step: int = 5  # min per interval change
+    dfr_max_raise: int = 30  # min, at most this far above the original interval
+    dfr_max_lower: int = 15  # min, at most this far below the original interval
+    dfr_abs_max: int = 120  # min, interval never above this
+    dfr_abs_min: int = 30  # min, interval never below this
+    enable_defrost: bool = True
 
 
 @dataclass
@@ -66,6 +75,13 @@ class Sample:
     heater: bool = False
     comp_on_min: float | None = None  # minutes since the compressor relay turned on
     since_defrost_min: float | None = None  # minutes since the last defrost ended
+    t_fin: float | None = None  # outdoor coil (fin) temperature
+    t_amb: float | None = None  # the outdoor unit's own ambient sensor (the controller's defrost input)
+    ffd: float | None = None  # controller's frost-free coil/ambient difference, K
+    flow: float | None = None  # water flow, l/h
+    fan: float | None = None  # outdoor fan speed, rpm
+    defrost_changed: float | None = None  # timestamp of the defrost sensor's last change
+    force_ok: bool = False  # the forced defrost script exists
     missing: tuple[str, ...] = ()
 
 
@@ -101,9 +117,22 @@ class Point:
     comp_on_min: float | None
     since_defrost_min: float | None
     missing: tuple[str, ...] = ()
+    t_ret: float | None = None
+    t_fin: float | None = None
+    t_amb: float | None = None
+    ffd: float | None = None
+    flow: float | None = None
+    fan: float | None = None
+    defrost_changed: float | None = None
+    force_ok: bool = False
+
+    @property
+    def t_air(self) -> float | None:
+        """Air entering the outdoor coil: the unit's own sensor, else the outdoor temperature."""
+        return self.t_amb if self.t_amb is not None else self.t_out
 
 
-CORE = ("p_el", "rps", "te", "tc", "t_suc", "t_dis", "eev", "t_out", "t_sup")
+CORE =("p_el", "rps", "te", "tc", "t_suc", "t_dis", "eev", "t_out", "t_sup")
 
 
 def _num(*values) -> bool:
@@ -167,7 +196,8 @@ def derive(s: Sample, settings: Settings, history) -> Point:
         appr_e=(s.t_out - s.te) if _num(s.t_out, s.te) else None,
         appr_c=(s.tc - s.t_sup) if _num(s.tc, s.t_sup) else None,
         frost=s.frost, comp_on_min=s.comp_on_min, since_defrost_min=s.since_defrost_min,
-        missing=s.missing,
+        missing=s.missing, t_ret=s.t_ret, t_fin=s.t_fin, t_amb=s.t_amb, ffd=s.ffd, flow=s.flow, fan=s.fan,
+        defrost_changed=s.defrost_changed, force_ok=s.force_ok,
     )
 
 

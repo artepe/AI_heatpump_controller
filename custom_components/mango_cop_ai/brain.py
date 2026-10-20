@@ -36,6 +36,7 @@ from .analysis import (
     quantile,
 )
 from .const import EEV_MAX_STEP, MIN_OD, MODE_AUTO, MODE_OBSERVE, MODE_OFF, MODE_PROPOSE, MODES, SV, TABLES
+from .defrost import Defrost
 
 MINUTE, HOUR, DAY = 60.0, 3600.0, 86400.0
 
@@ -92,6 +93,13 @@ class Log:
     message: str
 
 
+@dataclass
+class Force:
+    """Run the owner's forced defrost script."""
+
+    reason: str
+
+
 def short(key: str) -> str:
     return key.split("|", 1)[-1]
 
@@ -114,7 +122,7 @@ def pct(value):
 
 class Brain:
     def __init__(self, settings: Settings | None = None, stored: dict | None = None,
-                 mode: str = MODE_OBSERVE):
+                 mode: str = MODE_OBSERVE, defrost_mode: str = MODE_OBSERVE):
         self.s = settings or Settings()
         st = stored or {}
         self.mode = st.get("mode") if st.get("mode") in MODES else mode
@@ -151,6 +159,7 @@ class Brain:
         self.suggestion: dict | None = None
         self.budget_logged = 0.0
         self.status_text = "Kerää dataa"
+        self.defrost = Defrost(self, st.get("defrost"), mode=defrost_mode)
 
     # ------------------------------------------------------------------ persistence
     def to_dict(self) -> dict:
@@ -164,6 +173,7 @@ class Brain:
             "paused_until": self.paused_until, "pause_reason": self.pause_reason,
             "observed": self.observed, "anomaly_notified": self.anomaly_notified,
             "baselines": self.baselines.bins, "next_id": self.next_id, "eta_dry": self.eta_dry,
+            "defrost": self.defrost.to_dict(),
         }
 
     # ------------------------------------------------------------------ public API
@@ -174,6 +184,12 @@ class Brain:
         self.points.append(point)
         self._prune()
         self._external_changes(out)
+        self.defrost.check_external(out)
+        out += self.defrost.observe(point)
+        if point.frost is None and not point.defrost and self.defrost.cycle.get("loss") is not None:
+            # no frost sensor of its own: the defrost watch's estimate keeps frosted hours out of the
+            # learned COP level and lets the diagnosis name frost
+            point.frost = round(self.defrost.cycle["loss"] * 100, 1)
         self._monitor(point, out)
         if self.resume:
             self.resume = False
@@ -188,6 +204,8 @@ class Brain:
             out += self._advance(point)
         elif self.mode != MODE_OFF and point.stable:
             out += self._consider()
+        if not any(isinstance(c, Write | Force) for c in out):
+            out += self.defrost.act(point)
         self._expire()
         self._update_status()
         return out
@@ -198,6 +216,21 @@ class Brain:
         out = self._drain()
         if not out and self.action is not None:
             out = self._phase_write()
+        if not out:
+            out = self.defrost.phase_write()
+        self._update_status()
+        return out
+
+    def force_result(self, ok: bool, error: str | None = None, now: float | None = None) -> list:
+        """Report whether the forced defrost script could be started."""
+        if now is not None:
+            self.now = now
+        return self.defrost.force_result(ok, error)
+
+    def set_defrost_mode(self, mode: str, now: float) -> list:
+        self.now = now
+        out: list = []
+        self.defrost.set_mode(mode, out)
         self._update_status()
         return out
 
@@ -209,6 +242,10 @@ class Brain:
         self.write_log.append(self.now)
         self.writes_total += 1
         out: list = []
+        if write.kind.startswith("dfr_"):
+            out = self.defrost.write_result(write, ok, error, actual)
+            self._update_status()
+            return out
         if write.kind == "restore":
             self._restore_result(write, ok, error, out)
             self._update_status()
@@ -257,8 +294,11 @@ class Brain:
         old, self.mode = self.mode, mode
         if mode in (MODE_OFF, MODE_OBSERVE) and self.action is not None:
             self._abort(self.action, f"tila vaihdettiin: {mode}", out)
-        if mode != MODE_PROPOSE and (self.pending or self.approved):
-            self.pending = self.approved = None
+        eev_pending = self.pending and not self.pending.get("type", "").startswith("dfr_")
+        if mode != MODE_PROPOSE and (eev_pending or self.approved):
+            self.approved = None
+            if eev_pending:
+                self.pending = None
             out.append(Dismiss("ehdotus"))
         if old != mode:
             out.append(Log(f"Tila: {old} → {mode}"))
@@ -269,6 +309,16 @@ class Brain:
         self.now = now
         if not self.pending:
             return [Log("Ei hyväksyttävää ehdotusta")]
+        if self.pending.get("type", "").startswith("dfr_"):
+            # defrost proposals rest on past defrosts or on the frost right now: act at once
+            p, self.pending = self.pending, None
+            out = [Dismiss("ehdotus"), Log(f"Ehdotus hyväksytty: {p['title']}")]
+            if p["type"] == "dfr_force":
+                out += self.defrost.force_now(self.points[-1] if self.points else None)
+            else:
+                out += self.defrost.start(p)
+            self._update_status()
+            return out
         self.approved = {**self.pending, "approved_at": now}
         self.pending = None
         self._update_status()
@@ -280,6 +330,10 @@ class Brain:
         if not self.pending:
             return [Log("Ei hylättävää ehdotusta")]
         p, self.pending = self.pending, None
+        if p["type"] == "dfr_force":
+            self.backoff["type:dfr_force"] = now + 2 * HOUR
+            self._update_status()
+            return [Dismiss("ehdotus"), Log("Pakkosulatusehdotus hylätty. Ei ehdoteta uudelleen kahteen tuntiin.")]
         self.backoff[f"type:{p['type']}"] = now + DAY
         self._update_status()
         return [Dismiss("ehdotus"), Log(f"Ehdotus hylätty: {p['title']}. Ei ehdoteta uudelleen 24 tuntiin.")]
@@ -294,6 +348,7 @@ class Brain:
                 self._queue_restore(a["write_key"], a["before_values"][a["write_key"]], reason)
             self.action = None
             self.history.append(self._entry(a, "keskeytetty", reason))
+        self.defrost.cancel(reason, out)
         for key, value in list(self.managed.items()):
             orig = self.originals.get(key)
             if orig is not None and orig != value:
@@ -301,6 +356,7 @@ class Brain:
         self.pending = self.approved = None
         if reason == "käyttäjä":
             self.mode = MODE_OBSERVE
+            self.defrost.mode = MODE_OBSERVE
         if self.queue:
             out.append(Log(f"Palautetaan alkuperäiset arvot ({reason}): "
                            + ", ".join(f"{short(q['key'])} → {q['value']}" for q in self.queue)))
@@ -568,7 +624,7 @@ class Brain:
                                         "eev_spread", "lq_kp", "lq_w", "appr_e", "t_dis_p95", "sh_tgt",
                                         "sh_act", "t_out", "t_sup", "rps")}
         # start drying at the wet level; after a drying step accepted today, continue to a lower margin
-        drying = any(h["outcome"] == "hyväksytty" and TYPES[h["type"]]["purpose"] == "kuivatus"
+        drying = any(h["outcome"] == "hyväksytty" and TYPES.get(h["type"], {}).get("purpose") == "kuivatus"
                      and h["t"] > self.now - DAY for h in self.history)
         wet_start = m["wet_frac"] >= 0.6 and m["eta_med"] >= self.wet_eta
         wet = wet_start or (drying and m["eta_med"] >= self.eta_ref + self.s.continue_margin)

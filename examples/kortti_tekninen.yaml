@@ -157,6 +157,73 @@ cards:
       | kompressori | {{ v('sensor.hp_running_speed') }} rps | INVT | {{ v('sensor.invt_pout_power', 2) }} kW |
       | ulko | {{ v('sensor.ouman_outdoor_temperature') }} °C | meno / paluu | {{ v('sensor.lampopumppu_menovesi') }} / {{ v('sensor.lampopumppu_paluuvesi') }} °C |
 
+  # --- Sulatus: huurre nyt, viimeisimmät sulatukset ja säätimen sulatusvälit ------------------
+  - type: markdown
+    card_mod:
+      style: |
+        ha-card { font-family: "Roboto Mono", "SFMono-Regular", Menlo, Consolas, monospace; font-size: 12.5px; }
+    content: |
+      {%- set n = 'sensor.cop_tekoaly_sulatustarve' -%}
+      {%- set s = 'sensor.cop_tekoaly_sulatus' -%}
+      {%- macro f(v, d=1, u='') -%}{{ '–' if v is none or v == '' else (((v | float(0)) | round(d)) | string | replace('.', ',')) ~ u }}{%- endmacro -%}
+      {%- set need = states(n) | float(none) -%}
+      {%- set ver = {'turha': '<font color="#d29922">turha</font>', 'sopiva': '<font color="#3fb950">sopiva</font>',
+                     'myöhäinen': '<font color="#e5534b">myöhäinen</font>', 'kesken': '<font color="#e5534b">kesken</font>',
+                     'epäselvä': 'epäselvä'} -%}
+      ## <ha-icon icon="mdi:snowflake-melt"></ha-icon> Sulatus · {{ states('select.cop_tekoaly_sulatustila') }}
+      **{{ state_attr(n, 'kenno') or '–' }}** · sulatustarve {{ f(need, 0, ' %') }} · huurre {{ f(state_attr(n, 'huurre_k'), 1, ' K') }} · COP-häviö {{ f(state_attr(n, 'cop_häviö_pros'), 0, ' %') }}
+      Käyntiä sulatuksesta {{ f(state_attr(n, 'käynti_sulatuksesta_min'), 0, ' min') }} · 100 %:iin {{ f(state_attr(n, 'arvio_sulatustarpeeseen_min'), 0, ' min') }} · oma kynnys {{ f(state_attr(n, 'oma_huurrekynnys_k'), 1, ' K') }} · kaista {{ state_attr(n, 'kaista') or '–' }}
+      Pakkosulatus: `{{ state_attr(n, 'pakkosulatus_skripti') or 'skriptiä ei löydy' }}`
+      {%- if state_attr(s, 'pakkosulatus_tauolla_asti') %} · tauolla {{ as_timestamp(state_attr(s, 'pakkosulatus_tauolla_asti')) | timestamp_custom('%d.%m. %H:%M') }} asti{% endif %}
+      {%- if state_attr(n, 'pakkosulatus_estetty') %} · odottaa: {{ state_attr(n, 'pakkosulatus_estetty') }}{% endif %}
+      {%- set a = state_attr(s, 'toimenpide') %}
+      {%- if a %}
+
+      <ha-alert alert-type="info">{{ states(s) }}</ha-alert>
+
+      {{ a.syy }}
+      {%- elif state_attr(s, 'tekisi') %}
+
+      Tekisi: **{{ state_attr(s, 'tekisi') }}**
+      {%- endif %}
+      {%- set v24 = state_attr(s, 'arviot_24h') or {} %}
+
+      24 h: {{ state_attr(s, 'sulatuksia_24h') or 0 }} sulatusta, tekoälyn {{ state_attr(s, 'tekoälyn_sulatuksia_24h') or 0 }} · turhia {{ v24.get('turha', 0) }} · myöhäisiä {{ v24.get('myöhäinen', 0) }} · kesken {{ v24.get('kesken', 0) }} · {{ f(state_attr(s, 'sulatusenergia_24h_kwh'), 2, ' kWh') }}
+      {%- set recs = state_attr(s, 'viimeisimmät') or [] %}
+      {%- if recs %}
+
+      | aika | kesto | käynti | ulko | K | huurre | arvio | laukaisi |
+      |:--|--:|--:|--:|:-:|--:|:--|:--|
+      {% for r in recs -%}
+      | {{ as_timestamp(r.aika) | timestamp_custom('%d.%m. %H:%M') }} | {{ (r.kesto_s // 60) | int }}:{{ '%02d' | format((r.kesto_s % 60) | int) }} | {{ f(r['käynti_min'], 0) }} | {{ f(r.ulko, 1) }} | {{ r.kaista or '–' }} | {{ f(r.huurre_k, 1) }} | {{ ver.get(r.arvio, r.arvio) }} | {{ r.laukaisi }} |
+      {% endfor -%}
+      {%- endif %}
+      {%- set prm = state_attr(s, 'säätimen_sulatusparametrit') or {} %}
+      {%- set chg = state_attr(s, 'muutetut_sulatusvälit') or {} %}
+      {%- set bind = state_attr(s, 'sulatusväli_kaistoittain') or {} %}
+      {%- set edges = [prm.get('Dfr.Env.T.1'), prm.get('Dfr.Env.T.2'), prm.get('Dfr.Env.T.3'), prm.get('Dfr.Env.T.4')] %}
+      {%- if prm %}
+
+      | kaista | ulko | väli | huom |
+      |:-:|:--|--:|:--|
+      {% for i in range(1, 6) -%}
+      {%- set key = 'Dfr.Inte. ' ~ i -%}
+      {%- set e = edges | select('number') | sort(reverse=true) | list -%}
+      {%- set rng = ('> ' ~ e[0]) if i == 1 and e | length == 4 else (('≤ ' ~ e[3]) if i == 5 and e | length == 4 else ((e[i - 1] ~ '…' ~ e[i - 2]) if e | length == 4 else '–')) -%}
+      {%- set notes = namespace(t=[]) -%}
+      {%- if key in chg -%}{%- set notes.t = notes.t + [chg[key]['alkuperäinen'] ~ '→' ~ chg[key]['nyt']] -%}{%- endif -%}
+      {%- if bind.get(i | string) == key -%}{%- set notes.t = notes.t + ['ohjaa sulatuksia'] -%}{%- endif -%}
+      | {{ i }} | {{ rng }} °C | {{ prm.get(key, '–') }} min | {{ notes.t | join(', ') }} |
+      {% endfor -%}
+      | – | Dfr.Interval | {{ prm.get('Dfr.Interval', '–') }} min | {{ 'ohjaa sulatuksia' if 'Dfr.Interval' in bind.values() else '' }} |
+
+      Max-aika {{ prm.get('Dfr.Time', '–') }} s · loppulämpö {{ prm.get('Dfr.Coil T', '–') }} °C · alkulämpö ≤ {{ prm.get('Dfr. Coil T', '–') }} °C · sallittu ≤ {{ prm.get('Dfr. Env.T', '–') }} °C · SmartDfr {{ prm.get('EWD.SmartDfr', '–') }}
+      {%- endif %}
+      {%- for t in state_attr(s, 'suositukset') or [] %}
+
+      <ha-alert alert-type="warning">{{ t }}</ha-alert>
+      {%- endfor %}
+
   # --- Käyrät ---------------------------------------------------------------------------------
   - type: history-graph
     title: Märkyys
@@ -176,6 +243,14 @@ cards:
         name: SH oloarvo
       - entity: sensor.hp_subcool_superheat_controller
         name: SH tavoite
+  - type: history-graph
+    title: Huurre ja sulatukset
+    hours_to_show: 24
+    entities:
+      - entity: sensor.cop_tekoaly_sulatustarve
+        name: Sulatustarve
+      - entity: binary_sensor.hp_defrost_active
+        name: Sulatus
   - type: history-graph
     title: COP
     hours_to_show: 48
@@ -206,7 +281,8 @@ cards:
         ha-card { font-family: "Roboto Mono", "SFMono-Regular", Menlo, Consolas, monospace; font-size: 12.5px; }
     content: |
       {%- set h = state_attr('sensor.cop_tekoaly_tilanne', 'historia') or [] -%}
-      {%- set types = {'min_od_down': 'OD ↓', 'sv_up': 'Sv ↑', 'min_od_up': 'OD ↑', 'sv_down': 'Sv ↓'} -%}
+      {%- set types = {'min_od_down': 'OD ↓', 'sv_up': 'Sv ↑', 'min_od_up': 'OD ↑', 'sv_down': 'Sv ↓',
+                       'dfr_interval_up': 'väli ↑', 'dfr_interval_down': 'väli ↓'} -%}
       {%- set res = {'hyväksytty': '<font color="#3fb950">voimaan</font>', 'ei_hyotya': '<font color="#d29922">ei hyötyä, peruttu</font>',
                      'haitta': '<font color="#e5534b">haitta, peruttu</font>', 'keskeytetty': 'keskeytetty',
                      'ei_tunnistettu': 'vyöhykettä ei löytynyt', 'ei_varmistettu': 'ei varmistettu, peruttu'} -%}
