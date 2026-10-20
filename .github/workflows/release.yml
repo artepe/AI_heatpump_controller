@@ -5,6 +5,7 @@ on:
     paths:
       - custom_components/mango_cop_ai/manifest.json
       - .github/workflows/release.yml
+  workflow_dispatch:  # re-publish the current version by hand (an existing release is kept)
 permissions:
   contents: read
 concurrency:
