@@ -81,7 +81,11 @@ def cycle(
     A wet suction cannot be seen from the suction temperature (it reads saturation), so h1 is
     then too high: the COP reads too high and the apparent efficiency rises towards or above 1.
     """
-    sh = min(max(t_suction - te, 0.0), 20.0)
+    # Below saturation by more than sensor noise: dry-vapour enthalpy equations
+    # are invalid here. Do not silently clamp a potentially wet inlet to dry SH=0.
+    if t_suction - te < -0.25:
+        return None
+    sh = min(max(t_suction - te, 0.0), 20.0
     dsh = t_discharge - tc
     if not in_range(te, tc, dsh):
         return None
