@@ -742,6 +742,11 @@ class Brain:
                     "ehdotus"))
             return out
         if self.mode == MODE_AUTO:
+            if not self.s.power_meter_confirmed:
+                if self.now - self.observed.get("power_meter", 0) >= OBSERVE_LOG_EVERY:
+                    self.observed["power_meter"] = self.now
+                    out.append(Log("Automaattisäätö estetty: kokonaisottotehon mittaus odottaa vahvistusta"))
+                return out
             return out + self._start(prop)
         return out
 
