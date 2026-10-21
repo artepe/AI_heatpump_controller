@@ -16,7 +16,7 @@ from . import r290
 class Settings:
     """Tunable limits. Defaults are deliberately conservative."""
 
-    cop_basis: str = "vesipuoli"  # measured water-side COP preferred when configured
+    cop_basis: str = "kylmapiiri"  # measured water-side COP preferred when configured
     water_factor: float = 1.0  # multiply water-side heat by this (e.g. 0.62 if flow reads 1.6x)
     liquid_approach: float = 2.0  # K, liquid temperature = return water + this (as the kp sensor)
     eta_dry_default: float = 0.70  # apparent compressor efficiency with dry suction, until learned
