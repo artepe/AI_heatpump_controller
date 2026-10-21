@@ -69,6 +69,7 @@ class Runner:
         self._entities: dict[str, str] = {}
         self._unsub = None
         self.missing: list[str] = []
+        self.blocking_missing: list[str] = []
         self.last_tick = None
 
     # ------------------------------------------------------------------ lifecycle
@@ -337,6 +338,7 @@ class Runner:
             force_ok=force_st is not None and force_st.state not in BAD,
             missing=tuple(m for m in missing if m),
         )
+        self.blocking_missing = sorted(set(missing))
         self.missing = sorted(set(
             [eid for eid in [*self.sensors.values(), *self.faults] if eid and
              (get(eid) is None or get(eid).state in BAD)] + missing
