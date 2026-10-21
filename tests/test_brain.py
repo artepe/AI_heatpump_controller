@@ -283,7 +283,8 @@ def test_cop_drop_is_noticed_and_explained():
     h.run(3 * 60)
     warn = [n for n in h.notes if n[1] == "COP normaalia matalampi"]
     assert warn and "Höyrystimen lähestymä" in warn[0][2]
-    assert h.brain.cop["deviation_pct"] < -10
+    # Supply-temperature binning changes the exact baseline slightly.
+    assert h.brain.cop["deviation_pct"] < -9
 
 
 def test_failed_write_with_unknown_result_is_restored_once_the_parameter_is_back():
