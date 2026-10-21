@@ -296,7 +296,7 @@ class Defrost:
 
     def _steady(self, p: Point) -> bool:
         """Comparable running minute: no defrost or fault, compressor settled and speed steady."""
-        if not p.comp_on or p.defrost or p.fault or p.te is None or p.t_air is None or not p.rps or p.rps < 12:
+        if not p.comp_on or p.defrost or p.fault or p.missing or p.te is None or p.t_air is None or not p.rps or p.rps < 12:
             return False
         if (p.comp_on_min or 0) < 8:
             return False
@@ -538,8 +538,8 @@ class Defrost:
             return "pakkosulatus tauolla"
         if self.force_retry > self.now:
             return "edellinen pakkosulatus ei käynnistynyt, odotetaan"
-        if h.paused_until > self.now or p.fault:
-            return "vika- tai hälytystila"
+        if h.paused_until > self.now or p.fault or p.missing:
+            return "vika-, hälytys- tai mittaustieto puuttuu"
         if p.defrost or self.current is not None or (self.forced and self.forced["status"] == "pending"):
             return "sulatus jo käynnissä"
         if c["start"] is None or c["run"] < FORCE_MIN_RUN:
@@ -623,7 +623,7 @@ class Defrost:
     def _limits(self, key: str, direction: int) -> int | None:
         h = self.host
         p = h.params.get(key)
-        if not p or not p.available or p.value is None or (
+        if not p or not p.available or not p.trusted or p.value is None or (
                 key in h.failed and h.failed[key]["t"] > self.now - 7 * DAY):
             return None
         if max(h.backoff.get(key, 0), h.backoff.get(f"{key}|{direction}", 0)) > self.now:
@@ -651,6 +651,8 @@ class Defrost:
         self.proposal = None
         if not self.s.enable_defrost or self.mode == MODE_OFF:
             return
+        if rec.get("frost") is None or rec.get("run") is None:
+            return  # a clean-coil reference must exist before interval tuning
         band = rec["band"]
         same = [r for r in self.records if r["band"] == band and r["t"] > self.now - 3 * DAY]
         prop = None
