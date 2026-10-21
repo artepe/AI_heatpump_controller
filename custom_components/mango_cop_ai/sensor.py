@@ -80,7 +80,8 @@ def _status_attrs(runner):
         "mango_parametrit_saatavilla": sum(1 for p in b.params.values() if p.available),
         "vahvistetut_parametrit": sorted(runner.trusted_parameters),
         "turvalukitus": {
-            "puuttuvat_anturit": bool(runner.missing),
+            "puuttuvat_anturit": bool(runner.blocking_missing),
+            "pakolliset_puuttuvat": runner.blocking_missing,
             "kokonaisottoteho_vahvistamatta": not b.s.power_meter_confirmed,
             "parametrivyohykkeet_vahvistamatta": not bool(runner.trusted_parameters),
         },
