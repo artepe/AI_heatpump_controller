@@ -36,6 +36,13 @@ class Rig:
         hass.bus.async_listen("logbook_entry", lambda e: self.logbook.append(e.data["message"]))
 
     def push(self):
+        for eid in (
+            "binary_sensor.hp_fault_low_pressure",
+            "binary_sensor.hp_fault_high_pressure",
+            "binary_sensor.hp_fault_discharge_temperature_high",
+        ):
+            if eid not in self.frozen:
+                self.hass.states.async_set(eid, "off")
         for eid, (state, attrs) in to_states(self.plant.step()).items():
             if eid not in self.frozen:
                 self.hass.states.async_set(eid, state, attrs)
@@ -49,6 +56,13 @@ class Rig:
         assert await async_setup_component(self.hass, DOMAIN, {DOMAIN: conf})
         await self.hass.async_block_till_done()
         self.runner = self.hass.data[DOMAIN]
+        # Legacy plant tests deliberately use simulated, proven raw parameter routes.
+        # Production does NOT trust these routes without explicit owner approval.
+        from custom_components.mango_cop_ai.const import ALL_PARAMETERS
+        self.runner.trusted_parameters.update(ALL_PARAMETERS)
+        self.runner.brain.s.power_meter_confirmed = True
+        self.runner.brain.s.sh_guard_k = 0.0
+        self.runner.brain.s.require_water_cop = False
         return self
 
     async def run(self, minutes, until=None):
