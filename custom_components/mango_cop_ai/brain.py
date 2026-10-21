@@ -66,6 +66,7 @@ class Param:
     available: bool = True
     lower: int | None = None
     upper: int | None = None
+    trusted: bool = True  # explicit owner verification required for live parameter writes
 
 
 @dataclass
@@ -424,9 +425,13 @@ class Brain:
     def _limits(self, key: str, direction: int):
         """Allowed range for a move, or None. Moves only ever go one way from the original."""
         p = self.params.get(key)
-        if not p or not p.available or p.value is None or (
+        if not p or not p.available or not p.trusted or p.value is None or (
                 key in self.failed and self.failed[key]["t"] > self.now - FAILED_RETRY):
             return None
+        if key in MIN_OD and self.s.eev_full_steps is None:
+            travel = self.params.get(EEV_MAX_STEP)
+            if travel is None or not travel.available or not travel.trusted:
+                return None  # unverified max-step conversion would make OD percentages unsafe
         if max(self.backoff.get(key, 0), self.backoff.get(f"{key}|{direction}", 0)) > self.now:
             return None
         orig = self.originals.get(key, p.value)
@@ -516,7 +521,7 @@ class Brain:
         devs: dict[str, float] = {}
         expected = None
         if m60.get("n", 0) >= 30 and m60.get("t_out") is not None and m60.get("rps") is not None:
-            key = Baselines.key(m60["t_out"], m60["rps"])
+            key = Baselines.key(m60["t_out"], m60["rps"], m60.get("t_sup"))
             cop["bin"] = key
             for f in ("lq_kp", "lq_w"):
                 base, cur = self.baselines.get(key, f), h.get(f)
@@ -543,7 +548,7 @@ class Brain:
             if m30.get("n", 0) >= 20:
                 self.last_baseline = self.now
             if healthy and (dev is None or dev > -self.s.anomaly_pct / 2):
-                self.baselines.update(Baselines.key(m30["t_out"], m30["rps"]), m30)
+                self.baselines.update(Baselines.key(m30["t_out"], m30["rps"], m30.get("t_sup")), m30)
 
         if dev is not None and dev <= -self.s.anomaly_pct:
             self.anomaly_since = self.anomaly_since or self.now
@@ -585,6 +590,7 @@ class Brain:
             return d("tasaantuu", "Käynti ei ole vielä tasaista")
         info = {"näennäinen_hyötysuhde": round(m["eta_med"], 2), "märkänä": pct(m["wet_frac"]),
                 "eev_askeleet": m.get("eev_med")}
+        sh_now = median(p.sh for p in self._window(20) if p.stable)
         if m["wet_frac"] >= 0.5:
             if m["pinned_frac"] >= 0.6:
                 return d("marka_imu_minimi",
@@ -592,9 +598,13 @@ class Brain:
                          "eikä pysty kuristamaan", **info)
             return d("marka_imu", "Imukaasu märkää, vaikka EEV säätää: tulistuksen tavoite on liian "
                      "pieni", **info)
+        if sh_now is not None and sh_now <= -0.25:
+            return d("tulistus_epavarma",
+                     "Negatiivinen imu-tulistus: mahdollinen nestepaluu tai mittapoikkeama; "
+                     "tarkista antureiden sijoitus ja kalibrointi", **info)
         if m.get("frost") is not None and m["frost"] >= 8:
             return d("huurre", f"Kennossa huurretta, COP-häviö {fmt(m['frost'], 0)} %", **info)
-        key = Baselines.key(m["t_out"], m["rps"]) if m.get("t_out") is not None else None
+        key = Baselines.key(m["t_out"], m["rps"], m.get("t_sup")) if m.get("t_out") is not None else None
         base_e = self.baselines.get(key, "appr_e") if key else None
         base_c = self.baselines.get(key, "appr_c") if key else None
         if base_e is not None and m.get("appr_e") is not None and m["appr_e"] - base_e >= 3:
@@ -626,6 +636,8 @@ class Brain:
         # start drying at the wet level; after a drying step accepted today, continue to a lower margin
         drying = any(h["outcome"] == "hyväksytty" and TYPES.get(h["type"], {}).get("purpose") == "kuivatus"
                      and h["t"] > self.now - DAY for h in self.history)
+        # Low superheat by itself can reflect sensor accuracy or normal operation.
+        # Treat it as diagnostic evidence, not permission to change the valve.
         wet_start = m["wet_frac"] >= 0.6 and m["eta_med"] >= self.wet_eta
         wet = wet_start or (drying and m["eta_med"] >= self.eta_ref + self.s.continue_margin)
         state = "Imukaasu on märkää" if wet_start else "Imukaasu on yhä märän rajalla, kuivatusta jatketaan"
@@ -733,6 +745,11 @@ class Brain:
                     "ehdotus"))
             return out
         if self.mode == MODE_AUTO:
+            if not self.s.power_meter_confirmed:
+                if self.now - self.observed.get("power_meter", 0) >= OBSERVE_LOG_EVERY:
+                    self.observed["power_meter"] = self.now
+                    out.append(Log("Automaattisäätö estetty: kokonaisottotehon mittaus odottaa vahvistusta"))
+                return out
             return out + self._start(prop)
         return out
 
@@ -744,6 +761,9 @@ class Brain:
 
     # ------------------------------------------------------------------ action state machine
     def _start(self, prop: dict) -> list:
+        if not self.s.power_meter_confirmed or (self.s.require_water_cop and
+                                                not prop["before"].get("lq_w")):
+            return [Log("EEV-kirjoitus estetty: mittarin kokonaisottotehoa tai vesipuolen COP:tä ei ole vahvistettu")]
         kind = prop["type"]
         recent = [p for p in self._window(10) if p.stable]
         self.action = {
@@ -933,6 +953,21 @@ class Brain:
                   f"{fmt(b.get('eta_med'))} → {fmt(x.get('eta_med'))}")
         if x.get("n", 0) == 0:
             return False, "ei dataa"
+        # COP optimization must not confuse a model artefact with a physical gain.
+        if self.s.sh_guard_k > 0:
+            after_pts = [p for p in self.points if p.t >= a["settle_until"] and p.stable]
+            sh = median(p.sh for p in after_pts)
+            ctrl_sh = median(p.sh_act for p in after_pts)
+            if sh is None or sh < self.s.sh_guard_k:
+                return False, f"imun tulistus ei varmistunut turvalliseksi ({fmt(sh, 1)} K)"
+            if ctrl_sh is not None and ctrl_sh < self.s.sh_guard_k - 0.5:
+                return False, f"EEV-tulistus liian alhainen ({fmt(ctrl_sh, 1)} K)"
+        if self.s.require_water_cop:
+            if not b.get("lq_w") or not x.get("lq_w"):
+                return False, "vesipuolen mitattu COP puuttuu"
+            loss_pct = (1.0 - x["lq_w"] / b["lq_w"]) * 100.0
+            if loss_pct > self.s.cop_drop_pct:
+                return False, f"vesipuolen COP-laatuaste laski {loss_pct:.1f} %"
         if purpose == "kuivatus":
             better = (x["wet_frac"] <= b["wet_frac"] - 0.3) or (x["eta_med"] <= b["eta_med"] - 0.02)
             if a["type"] == "min_od_down" and x.get("pinned_frac", 1) <= b.get("pinned_frac", 0) - 0.4 \

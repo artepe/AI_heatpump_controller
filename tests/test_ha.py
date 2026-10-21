@@ -36,6 +36,13 @@ class Rig:
         hass.bus.async_listen("logbook_entry", lambda e: self.logbook.append(e.data["message"]))
 
     def push(self):
+        for eid in (
+            "binary_sensor.hp_fault_low_pressure",
+            "binary_sensor.hp_fault_high_pressure",
+            "binary_sensor.hp_fault_discharge_temperature_high",
+        ):
+            if eid not in self.frozen:
+                self.hass.states.async_set(eid, "off")
         for eid, (state, attrs) in to_states(self.plant.step()).items():
             if eid not in self.frozen:
                 self.hass.states.async_set(eid, state, attrs)
@@ -49,6 +56,13 @@ class Rig:
         assert await async_setup_component(self.hass, DOMAIN, {DOMAIN: conf})
         await self.hass.async_block_till_done()
         self.runner = self.hass.data[DOMAIN]
+        # Legacy plant tests deliberately use simulated, proven raw parameter routes.
+        # Production does NOT trust these routes without explicit owner approval.
+        from custom_components.mango_cop_ai.const import ALL_PARAMETERS
+        self.runner.trusted_parameters.update(ALL_PARAMETERS)
+        self.runner.brain.s.power_meter_confirmed = True
+        self.runner.brain.s.sh_guard_k = 0.0
+        self.runner.brain.s.require_water_cop = False
         return self
 
     async def run(self, minutes, until=None):
@@ -168,6 +182,17 @@ async def test_missing_sensor_blocks_decisions(hass, freezer, mocked_client, har
     assert hardware.writes == 0
     assert "sensor.ei_ole_olemassa" in rig.state("sensor.cop_tekoaly_diagnoosi").state
     assert "sensor.ei_ole_olemassa" in rig.state("sensor.cop_tekoaly_tilanne").attributes["puuttuvat_entiteetit"]
+
+
+async def test_missing_fault_sensor_blocks_unattended_parameter_writes(
+        hass, freezer, mocked_client, hardware):
+    rig = await Rig(hass, freezer, hardware).start({"tila": "Automaattinen"})
+    eid = "binary_sensor.hp_fault_high_pressure"
+    rig.frozen.add(eid)
+    hass.states.async_remove(eid)
+    await rig.run(120)
+    assert hardware.writes == 0
+    assert eid in rig.state("sensor.cop_tekoaly_tilanne").attributes["puuttuvat_entiteetit"]
 
 
 async def test_yaml_settings_reach_the_brain(hass, freezer, mocked_client, hardware):

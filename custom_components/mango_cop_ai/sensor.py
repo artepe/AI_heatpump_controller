@@ -22,6 +22,39 @@ def _ts(t):
     return None if not t else datetime.fromtimestamp(t, UTC).isoformat()
 
 
+def _optimization_advice(runner):
+    """Read-only suggestions. Never command compressor, Ouman or fan hardware."""
+    b = runner.brain
+    p = b.points[-1] if b.points else None
+    if not p or not p.stable:
+        return "Odota tasaista käyntiä ja varmista mittaukset ennen optimointivertailua."
+    if not b.s.power_meter_confirmed:
+        return "Vahvista koko lämpöpumpun ottotehon mittaus ennen COP-vertailuja."
+    if p.t_out is not None and p.t_out >= 2 and p.t_sup is not None and p.t_sup >= 50:
+        return ("Tutki voiko menoveden tavoitetta alentaa 1-2 K ilman mukavuus-"
+                "tai varaajarajoituksen rikkomista; AI ei muuta Oumanin asetusta.")
+    return "Vertaa eri kompressorinopeuksia saman ulko- ja menolampotilan mittausjaksoissa."
+
+
+def _matched_speed_quality(runner):
+    """Available learned water-COP quality levels at similar outdoor/water temperature."""
+    b = runner.brain
+    p = b.points[-1] if b.points else None
+    if not p or not p.stable or p.t_sup is None or p.t_out is None or not b.s.power_meter_confirmed:
+        return {}
+    from .analysis import Baselines
+
+    speeds = {"<30": 25.0, "30-45": 35.0, ">45": 50.0}
+    result = {}
+    for name, representative in speeds.items():
+        key = Baselines.key(p.t_out, representative, p.t_sup)
+        row = b.baselines.bins.get(key, {})
+        if row.get("n", 0) >= 4 and row.get("lq_w") is not None:
+            result[name] = {"laatuaste": round(row["lq_w"] * 100, 1),
+                            "vertailuikkunoita": row["n"]}
+    return result
+
+
 def _status_attrs(runner):
     b = runner.brain
     st = b.status()
@@ -45,6 +78,15 @@ def _status_attrs(runner):
         "puuttuvat_entiteetit": runner.missing,
         "mango_parametrit_löytyi": len(runner._entities),
         "mango_parametrit_saatavilla": sum(1 for p in b.params.values() if p.available),
+        "vahvistetut_parametrit": sorted(runner.trusted_parameters),
+        "turvalukitus": {
+            "puuttuvat_anturit": bool(runner.blocking_missing),
+            "pakolliset_puuttuvat": runner.blocking_missing,
+            "kokonaisottoteho_vahvistamatta": not b.s.power_meter_confirmed,
+            "parametrivyohykkeet_vahvistamatta": not bool(runner.trusted_parameters),
+        },
+        "optimointi_vinkki": _optimization_advice(runner),
+        "nopeusvertailu_lukutilassa": _matched_speed_quality(runner),
     }
 
 

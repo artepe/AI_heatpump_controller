@@ -41,6 +41,10 @@ STATUS_ENTITY = "sensor.cop_tekoaly_tilanne"
 STALE_S = 15 * 60  # a core reading not refreshed for this long counts as missing
 
 
+def ts_now() -> float:
+    return dt_util.utcnow().timestamp()
+
+
 def _float(state) -> float | None:
     if state is None or state.state in BAD:
         return None
@@ -56,6 +60,7 @@ class Runner:
         self.hass = hass
         self.sensors = {**DEFAULT_SENSORS, **conf.get("anturit", {})}
         self.faults = list(conf.get("vikatilat", []))
+        self.trusted_parameters = set(conf.get("vahvistetut_parametrit", []))
         self.overrides = dict(conf.get("parametrit", {}))
         self.force_script: str | None = conf.get("pakkosulatus")
         self.brain = Brain(settings, stored, mode=conf.get("tila"), defrost_mode=conf.get("sulatus_tila"))
@@ -64,6 +69,7 @@ class Runner:
         self._entities: dict[str, str] = {}
         self._unsub = None
         self.missing: list[str] = []
+        self.blocking_missing: list[str] = []
         self.last_tick = None
 
     # ------------------------------------------------------------------ lifecycle
@@ -213,7 +219,15 @@ class Runner:
             eid = self.entity_for(key)
             st = self.hass.states.get(eid) if eid else None
             if st is None or st.state in BAD:
-                out[key] = Param(None, False)
+                out[key] = Param(None, False, trusted=False)
+                continue
+            # Only owner-verified physical mappings can be written by the AI. A successful
+            # raw write/readback alone does not establish meaning or engineering units.
+            trusted = key in self.trusted_parameters
+            received = st.attributes.get("data_received_at")
+            if received is not None and (not isinstance(received, (int, float)) or
+                                         ts_now() - received > STALE_S):
+                out[key] = Param(None, False, trusted=trusted)
                 continue
             raw = st.attributes.get("raw_value")
             value = raw if isinstance(raw, int) else _float(st)
@@ -221,6 +235,7 @@ class Runner:
             out[key] = Param(
                 None if value is None else int(round(value)), True,
                 None if lo is None else int(math.ceil(lo)), None if hi is None else int(math.floor(hi)),
+                trusted,
             )
         return out
 
@@ -269,6 +284,9 @@ class Runner:
             eid = s.get(key)
             st = get(eid) if eid else None
             v = _float(st)
+            reported = (getattr(st, "last_reported", None) or getattr(st, "last_updated", None))
+            if v is not None and reported is not None and ts - reported.timestamp() > STALE_S:
+                v = None
             if v is None:
                 return None
             unit = st.attributes.get("unit_of_measurement")
@@ -289,7 +307,14 @@ class Runner:
         p_el = kw("sahko")
         if p_el is None:
             missing.append(s.get("sahko"))
-        fault = any((st := get(eid)) is not None and st.state == "on" for eid in self.faults)
+        fault = False
+        for eid in self.faults:
+            st = get(eid)
+            if st is None or st.state in BAD or st.state not in ("on", "off"):
+                missing.append(eid)
+                continue
+            if st.state == "on":
+                fault = True
         heater_state = get(s["vastus"]) if s.get("vastus") else None
         flow = num("virtaus")
         flow_st = get(s["virtaus"]) if s.get("virtaus") else None
@@ -313,7 +338,11 @@ class Runner:
             force_ok=force_st is not None and force_st.state not in BAD,
             missing=tuple(m for m in missing if m),
         )
-        self.missing = [eid for eid in [*self.sensors.values(), *self.faults] if eid and get(eid) is None]
+        self.blocking_missing = sorted(set(missing))
+        self.missing = sorted(set(
+            [eid for eid in [*self.sensors.values(), *self.faults] if eid and
+             (get(eid) is None or get(eid).state in BAD)] + missing
+        ))
         return sample
 
     # ------------------------------------------------------------------ for entities

@@ -1,3 +1,9 @@
+> **Turvallinen optimointi:** automaattikirjoitukset edellyttävät nykyään vahvistettuja
+> vikantureita, koko lämpöpumpun ottotehon mittausta, positiivisen tulistuksen
+> varmistusta ja erikseen hyväksyttyjen Mango-parametrien listaa.
+> Lue [turvallisen käyttöönoton ohje](docs/SAFE_OPTIMIZATION.md) ennen
+> automaattiohjauksen kytkemistä päälle.
+
 # Mango COP-tekoäly (AI Heat Pump Controller)
 
 Home Assistantin integraatio, joka toimii Raspberry Pi:llä HA:n sisällä. Se vahtii VILP:n COP:ia minuutin välein, säätää EEV:tä Mango Tuya Local -integraation kautta, kun data näyttää korjattavan vian, ja päättää, milloin ulkoyksikön kenno sulatetaan.
