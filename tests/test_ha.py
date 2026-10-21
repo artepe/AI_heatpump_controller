@@ -184,6 +184,17 @@ async def test_missing_sensor_blocks_decisions(hass, freezer, mocked_client, har
     assert "sensor.ei_ole_olemassa" in rig.state("sensor.cop_tekoaly_tilanne").attributes["puuttuvat_entiteetit"]
 
 
+async def test_missing_fault_sensor_blocks_unattended_parameter_writes(
+        hass, freezer, mocked_client, hardware):
+    rig = await Rig(hass, freezer, hardware).start({"tila": "Automaattinen"})
+    eid = "binary_sensor.hp_fault_high_pressure"
+    rig.frozen.add(eid)
+    hass.states.async_remove(eid)
+    await rig.run(120)
+    assert hardware.writes == 0
+    assert eid in rig.state("sensor.cop_tekoaly_tilanne").attributes["puuttuvat_entiteetit"]
+
+
 async def test_yaml_settings_reach_the_brain(hass, freezer, mocked_client, hardware):
     rig = await Rig(hass, freezer, hardware).start({
         "tila": "Ehdota",
