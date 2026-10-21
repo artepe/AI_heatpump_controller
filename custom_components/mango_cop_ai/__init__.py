@@ -31,6 +31,9 @@ PLATFORMS = [Platform.SENSOR, Platform.SELECT, Platform.BUTTON]
 # Finnish configuration keys -> Settings fields
 SETTING_KEYS = {
     "cop_lahde": ("cop_basis", vol.In(["kylmapiiri", "vesipuoli"])),
+    "kokonaisottoteho_vahvistettu": ("power_meter_confirmed", cv.boolean),
+    "turvatulistus_k": ("sh_guard_k", vol.All(vol.Coerce(float), vol.Range(min=0.1, max=10))),
+    "vaadi_vesipuolen_cop": ("require_water_cop", cv.boolean),
     "vesipuolen_kerroin": ("water_factor", vol.All(vol.Coerce(float), vol.Range(min=0.2, max=3))),
     "nesteen_lahestyminen": ("liquid_approach", vol.All(vol.Coerce(float), vol.Range(min=0, max=10))),
     "kuivan_imun_hyotysuhde": ("eta_dry_default", vol.All(vol.Coerce(float), vol.Range(min=0.5, max=0.85))),
@@ -77,6 +80,7 @@ CONFIG_SCHEMA = vol.Schema(
                     ),
                     vol.Optional("vikatilat", default=DEFAULT_FAULTS): cv.entity_ids,
                     vol.Optional("parametrit", default={}): vol.Schema({cv.string: cv.entity_id}),
+                    vol.Optional("vahvistetut_parametrit", default=[]): vol.All(cv.ensure_list, [cv.string]),
                     vol.Optional("asetukset", default={}): vol.Schema(
                         {vol.Optional(k): v[1] for k, v in SETTING_KEYS.items()}
                     ),
