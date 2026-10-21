@@ -31,6 +31,7 @@ class Settings:
     cop_drop_pct: float = 3.0  # reject worsening water-side efficiency
     sh_guard_k: float = 1.5  # require positive superheat before accepting EEV experiments
     require_water_cop: bool = True  # never accept an EEV change on refrigerant model alone
+    power_meter_confirmed: bool = False  # user has verified total electrical input, not just inverter power
     anomaly_pct: float = 10.0  # warn when COP quality is this much below the learned level
     min_od_step: int = 2  # % per step for Heat Min OD
     min_od_floor: int = 8  # % absolute lowest Heat Min OD
