@@ -16,7 +16,7 @@ from . import r290
 class Settings:
     """Tunable limits. Defaults are deliberately conservative."""
 
-    cop_basis: str = "kylmapiiri"  # or "vesipuoli": which COP the anomaly watch follows
+    cop_basis: str = "vesipuoli"  # measured water-side COP preferred when configured
     water_factor: float = 1.0  # multiply water-side heat by this (e.g. 0.62 if flow reads 1.6x)
     liquid_approach: float = 2.0  # K, liquid temperature = return water + this (as the kp sensor)
     eta_dry_default: float = 0.70  # apparent compressor efficiency with dry suction, until learned
@@ -28,7 +28,9 @@ class Settings:
     writes_per_day: int = 12  # parameter writes in any 24 h, safety restores excluded
     discharge_max: float = 100.0  # °C, undo the change if the discharge gas gets hotter
     approach_max_rise: float = 6.0  # K, undo if outdoor - evaporating grows this much (starving)
-    cop_drop_pct: float = 8.0  # undo an efficiency change if water-side quality drops this much
+    cop_drop_pct: float = 3.0  # reject worsening water-side efficiency
+    sh_guard_k: float = 1.5  # require positive superheat before accepting EEV experiments
+    require_water_cop: bool = True  # never accept an EEV change on refrigerant model alone
     anomaly_pct: float = 10.0  # warn when COP quality is this much below the learned level
     min_od_step: int = 2  # % per step for Heat Min OD
     min_od_floor: int = 8  # % absolute lowest Heat Min OD
@@ -176,7 +178,7 @@ def derive(s: Sample, settings: Settings, history) -> Point:
         base = median(recent)
         steady = bool(old) and abs(s.rps - old[-1].rps) <= 2.0 and (base is None or s.rps <= base + 5.0)
     stable = (
-        s.comp_on and not s.defrost and not s.fault and steady
+        s.comp_on and not s.defrost and not s.fault and not s.missing and steady
         and (s.comp_on_min or 0) >= 15
         and (s.since_defrost_min is None or s.since_defrost_min >= 20)
         and all(_num(getattr(s, name)) for name in CORE)
@@ -253,10 +255,12 @@ class Baselines:
         self.bins: dict[str, dict] = data or {}
 
     @staticmethod
-    def key(t_out: float, rps: float) -> str:
+    def key(t_out: float, rps: float, t_sup: float | None = None) -> str:
+        """Include water temperature so dissimilar heating conditions are not mixed."""
         band = int(math.floor(t_out / 2.0)) * 2
         speed = "<30" if rps < 30 else ("30-45" if rps <= 45 else ">45")
-        return f"{band}|{speed}"
+        water = "unknown" if t_sup is None else str(int(math.floor(t_sup / 3.0)) * 3)
+        return f"{band}|{speed}|{water}"
 
     def update(self, key: str, values: dict, alpha: float = 0.05) -> None:
         b = self.bins.setdefault(key, {"n": 0})
