@@ -428,6 +428,10 @@ class Brain:
         if not p or not p.available or not p.trusted or p.value is None or (
                 key in self.failed and self.failed[key]["t"] > self.now - FAILED_RETRY):
             return None
+        if key in MIN_OD and self.s.eev_full_steps is None:
+            travel = self.params.get(EEV_MAX_STEP)
+            if travel is None or not travel.available or not travel.trusted:
+                return None  # unverified max-step conversion would make OD percentages unsafe
         if max(self.backoff.get(key, 0), self.backoff.get(f"{key}|{direction}", 0)) > self.now:
             return None
         orig = self.originals.get(key, p.value)
