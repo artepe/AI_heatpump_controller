@@ -712,6 +712,8 @@ class Defrost:
 
     def act(self, p: Point) -> list:
         """What the defrost control wants to do now (called when nothing else is writing)."""
+        if p.fault or p.missing:
+            return []  # neither force defrost nor change interval with unknown safety state
         h = self.host
         a = self.action
         if a is not None:
