@@ -753,6 +753,9 @@ class Brain:
 
     # ------------------------------------------------------------------ action state machine
     def _start(self, prop: dict) -> list:
+        if not self.s.power_meter_confirmed or (self.s.require_water_cop and
+                                                not prop["before"].get("lq_w")):
+            return [Log("EEV-kirjoitus estetty: mittarin kokonaisottotehoa tai vesipuolen COP:tä ei ole vahvistettu")]
         kind = prop["type"]
         recent = [p for p in self._window(10) if p.stable]
         self.action = {
