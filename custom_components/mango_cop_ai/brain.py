@@ -587,13 +587,17 @@ class Brain:
         info = {"näennäinen_hyötysuhde": round(m["eta_med"], 2), "märkänä": pct(m["wet_frac"]),
                 "eev_askeleet": m.get("eev_med")}
         sh_now = median(p.sh for p in self._window(20) if p.stable)
-        if m["wet_frac"] >= 0.5 or (sh_now is not None and sh_now <= 0.5):
+        if m["wet_frac"] >= 0.5:
             if m["pinned_frac"] >= 0.6:
                 return d("marka_imu_minimi",
                          f"Imukaasu märkää: EEV on minimiavauksessa ({m['pinned_steps']:.0f} askelta) "
                          "eikä pysty kuristamaan", **info)
             return d("marka_imu", "Imukaasu märkää, vaikka EEV säätää: tulistuksen tavoite on liian "
                      "pieni", **info)
+        if sh_now is not None and sh_now <= -0.25:
+            return d("tulistus_epavarma",
+                     "Negatiivinen imu-tulistus: mahdollinen nestepaluu tai mittapoikkeama; "
+                     "tarkista antureiden sijoitus ja kalibrointi", **info)
         if m.get("frost") is not None and m["frost"] >= 8:
             return d("huurre", f"Kennossa huurretta, COP-häviö {fmt(m['frost'], 0)} %", **info)
         key = Baselines.key(m["t_out"], m["rps"], m.get("t_sup")) if m.get("t_out") is not None else None
@@ -628,14 +632,9 @@ class Brain:
         # start drying at the wet level; after a drying step accepted today, continue to a lower margin
         drying = any(h["outcome"] == "hyväksytty" and TYPES.get(h["type"], {}).get("purpose") == "kuivatus"
                      and h["t"] > self.now - DAY for h in self.history)
-        # Apparent isentropic efficiency is not proof of liquid return.
-        # Prioritise measured suction/controller superheat for suspected floodback.
-        suction_sh = median(p.sh for p in win if p.stable)
-        controller_sh = m.get("sh_act")
-        low_sh = (suction_sh is not None and suction_sh <= 0.5) or (
-            controller_sh is not None and controller_sh <= 0.5
-        )
-        wet_start = low_sh or (m["wet_frac"] >= 0.6 and m["eta_med"] >= self.wet_eta)
+        # Low superheat by itself can reflect sensor accuracy or normal operation.
+        # Treat it as diagnostic evidence, not permission to change the valve.
+        wet_start = m["wet_frac"] >= 0.6 and m["eta_med"] >= self.wet_eta
         wet = wet_start or (drying and m["eta_med"] >= self.eta_ref + self.s.continue_margin)
         state = "Imukaasu on märkää" if wet_start else "Imukaasu on yhä märän rajalla, kuivatusta jatketaan"
         evidence = (f"näennäinen hyötysuhde {fmt(m['eta_med'])}, kuivan imun taso {fmt(self.eta_ref)}, "
