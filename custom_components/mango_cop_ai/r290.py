@@ -85,7 +85,7 @@ def cycle(
     # are invalid here. Do not silently clamp a potentially wet inlet to dry SH=0.
     if t_suction - te < -0.25:
         return None
-    sh = min(max(t_suction - te, 0.0), 20.0
+    sh = min(max(t_suction - te, 0.0), 20.0)
     dsh = t_discharge - tc
     if not in_range(te, tc, dsh):
         return None
