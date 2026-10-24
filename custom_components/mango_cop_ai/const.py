@@ -2,7 +2,7 @@
 
 DOMAIN = "mango_cop_ai"
 NAME = "Mango COP-tekoäly"
-VERSION = "1.1.0"
+VERSION = "1.1.1"
 MANGO_DOMAIN = "mango_tuya_local"
 
 MODE_OFF = "Pois"

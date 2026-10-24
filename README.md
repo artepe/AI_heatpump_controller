@@ -10,7 +10,7 @@ integration (Mango Energy monoblocks, 770-parameter Tuya profile).
 
 [Suomenkielinen ohje](README_FI.md)
 
-**Version 1.1.0 beta.** Tested against a real Home Assistant core and the real Mango Tuya Local
+**Version 1.1.1 beta.** Tested against a real Home Assistant core and the real Mango Tuya Local
 integration over its simulated Tuya transport, with a simulated heat pump. The EEV writes have
 been confirmed on a physical unit (Heat Sv5 changed the controller's superheat target as
 expected); the defrost control has not yet run on a physical unit.

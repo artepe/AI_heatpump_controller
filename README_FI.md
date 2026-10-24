@@ -11,7 +11,7 @@ Home Assistantin integraatio, joka toimii Raspberry Pi:llä HA:n sisällä. Se v
 
 1. Asenna integraatio jommallakummalla tavalla:
    - **HACS:** lisää `https://github.com/artepe/AI_heatpump_controller` mukautetuksi repositorioksi (tyyppi Integraatio) ja lataa **AI Heat Pump Controller**.
-   - **Käsin:** lataa `mango_cop_ai_<versio>.zip` [Releases-sivulta](https://github.com/artepe/AI_heatpump_controller/releases) ja pura se Home Assistantin `config`-kansioon niin, että syntyy kansio `config/custom_components/mango_cop_ai/`. Voit käyttää Samba-jakoa, File editoria tai Terminal & SSH -lisäosaa: `cd /config && unzip -o mango_cop_ai_1.1.0.zip`.
+   - **Käsin:** lataa `mango_cop_ai_<versio>.zip` [Releases-sivulta](https://github.com/artepe/AI_heatpump_controller/releases) ja pura se Home Assistantin `config`-kansioon niin, että syntyy kansio `config/custom_components/mango_cop_ai/`. Voit käyttää Samba-jakoa, File editoria tai Terminal & SSH -lisäosaa: `cd /config && unzip -o mango_cop_ai_1.1.1.zip`.
 2. Lisää `configuration.yaml`:n loppuun yksi rivi:
 
    ```yaml
