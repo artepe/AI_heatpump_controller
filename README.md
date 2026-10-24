@@ -164,3 +164,13 @@ The tests cover:
 
 MIT. Community project, not a manufacturer release. It changes heat pump controller
 parameters; use it at your own risk and start in observe mode.
+
+## Measurement health
+
+`sensor.cop_tekoaly_mittausten_tila` reports waiting, healthy or incomplete
+measurements (in Finnish). Its attributes list required measurements blocking
+control, missing entities and the last processing time. Electrical power and
+compressor/defrost states older than 15 minutes cannot qualify as stable operation.
+Missing or unknown compressor/defrost states also block stable operation.
+Monitoring resumes automatically when the readings recover. Outdoor temperatures
+are exempt from this freshness limit. Both example dashboards include this sensor.

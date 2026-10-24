@@ -8,6 +8,8 @@ cards:
         name: Tila
       - entity: sensor.cop_tekoaly_tilanne
         name: Tilanne
+      - entity: sensor.cop_tekoaly_mittausten_tila
+        name: Mittausten tila
       - entity: sensor.cop_tekoaly_diagnoosi
         name: Diagnoosi
       - entity: sensor.cop_tekoaly_cop

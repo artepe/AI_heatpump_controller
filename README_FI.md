@@ -221,3 +221,16 @@ Jos jokin vikatila-anturi on normaalikäytössä päällä, poista se listalta. 
 - Vyöhykkeiden rajat opitaan käytössä. Ensimmäinen haku samoissa oloissa voi viedä 1–9 kokeilua, jokainen 4–15 minuuttia.
 - Vesipuolen COP voi olla mittakaavaltaan vinossa (tekijän laitteistossa noin 1,6-kertainen, kunnes ΔT- tai virtausvirhe korjataan). Tekoäly vertaa sitä vain omaan aiempaan tasoonsa, joten mittakaavavirhe ei haittaa.
 - Yhteisöprojekti, ei valmistajan julkaisu. Integraatio muuttaa lämpöpumpun ohjaimen parametreja: käyttö omalla vastuulla, ja aloita aina tarkkailutilasta.
+
+## Mittausten kunnon seuranta
+
+`sensor.cop_tekoaly_mittausten_tila` näyttää tilan **Odottaa mittauksia**,
+**Kunnossa** tai **Puutteellinen**. Attribuutti `ohjauksen_estävät_mittaukset`
+luettelee puuttuvat, virheelliset tai vanhentuneet pakolliset mittaukset, ja
+`viimeisin_päivitys` kertoo viimeisimmän käsittelyajan. Valinnainen puuttuva
+anturi näkyy attribuutissa `puuttuvat_entiteetit`, mutta ei yksin estä ohjausta.
+
+Yli 15 minuuttia raportoimatta ollut sähköteho sekä kompressorin ja sulatuksen
+tilat estävät tasaiseksi käynniksi hyväksymisen. Myös tuntematon tai puuttuva
+kompressorin tai sulatuksen tila estää sen. Mittausten palautuessa seuranta
+jatkuu automaattisesti. Ulkolämpöantureihin tätä aikarajaa ei sovelleta.

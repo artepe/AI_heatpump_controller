@@ -18,6 +18,7 @@ from .plant import DEFROST_VALUES, DFR_INTE_HW, Plant, to_states
 DATA = {"host": "127.0.0.1", "device_id": "TEST_DEVICE", "local_key": "0000000000000000"}
 OD6, OD5 = "5:41", "5:40"
 ENTITIES = [
+    "sensor.cop_tekoaly_mittausten_tila",
     "select.cop_tekoaly_tila", "sensor.cop_tekoaly_tilanne", "sensor.cop_tekoaly_diagnoosi",
     "sensor.cop_tekoaly_cop", "sensor.cop_tekoaly_cop_poikkeama", "sensor.cop_tekoaly_cop_laatuaste",
     "sensor.cop_tekoaly_naennainen_hyotysuhde", "sensor.cop_tekoaly_kirjoitukset_24_h",
@@ -75,7 +76,7 @@ class Rig:
 
 async def test_observe_mode_uses_the_real_entities_and_never_writes(hass, freezer, mocked_client, hardware):
     rig = await Rig(hass, freezer, hardware).start(None)
-    await rig.run(135)  # ends in steady running, between oil returns and before the defrost
+    assert await rig.run(180, until=lambda r: r.runner.brain.suggestion is not None)
     assert hardware.writes == 0
     assert sorted(e for e in hass.states.async_entity_ids() if "cop_tekoaly" in e) == sorted(ENTITIES)
     assert rig.state("select.cop_tekoaly_tila").state == "Tarkkailu"
@@ -286,3 +287,28 @@ async def test_clean_coil_defrosts_lengthen_the_interval_through_mango(hass, fre
                                    blocking=True)
     await hass.async_block_till_done()
     assert hardware.values[DFR_INTE_HW[4]] == 35  # the unverified trial is undone
+
+
+async def test_stale_power_and_missing_defrost_block_measurements(hass, freezer, mocked_client, hardware):
+    rig = await Rig(hass, freezer, hardware).start(None)
+    power = rig.runner.sensors["sahko"]
+    defrost = rig.runner.sensors["sulatus"]
+    rig.frozen.update((power, defrost))
+    await rig.run(17)
+    assert power in rig.runner.invalid
+    assert defrost in rig.runner.invalid
+    assert rig.runner._sample(rig.runner.last_tick).p_el is None
+    assert rig.state("sensor.cop_tekoaly_mittausten_tila").state == "Puutteellinen"
+    rig.hass.states.async_remove(defrost)
+    sample = rig.runner._sample(rig.runner.last_tick)
+    assert defrost in sample.missing
+    rig.frozen.discard(power)
+    await rig.run(1)
+    assert power not in rig.runner.invalid
+    assert defrost in rig.runner.invalid
+    assert not rig.runner.brain.points[-1].stable
+    rig.frozen.clear()
+    await rig.run(1)
+    assert not rig.runner.invalid
+    assert rig.state("sensor.cop_tekoaly_mittausten_tila").state == "Kunnossa"
+    assert hardware.writes == 0

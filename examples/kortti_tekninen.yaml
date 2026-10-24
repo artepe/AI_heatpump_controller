@@ -50,6 +50,8 @@ cards:
     entities:
       - entity: select.cop_tekoaly_tila
         name: Tila
+      - entity: sensor.cop_tekoaly_mittausten_tila
+        name: Mittausten tila
       - type: buttons
         entities:
           - entity: button.cop_tekoaly_hyvaksy_ehdotus

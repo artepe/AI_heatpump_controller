@@ -176,7 +176,7 @@ def derive(s: Sample, settings: Settings, history) -> Point:
         base = median(recent)
         steady = bool(old) and abs(s.rps - old[-1].rps) <= 2.0 and (base is None or s.rps <= base + 5.0)
     stable = (
-        s.comp_on and not s.defrost and not s.fault and steady
+        s.comp_on and not s.defrost and not s.fault and not s.missing and steady
         and (s.comp_on_min or 0) >= 15
         and (s.since_defrost_min is None or s.since_defrost_min >= 20)
         and all(_num(getattr(s, name)) for name in CORE)

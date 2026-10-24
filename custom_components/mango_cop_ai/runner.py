@@ -65,6 +65,7 @@ class Runner:
         self._unsub = None
         self.missing: list[str] = []
         self.last_tick = None
+        self.invalid: list[str] = []
 
     # ------------------------------------------------------------------ lifecycle
     @callback
@@ -251,6 +252,10 @@ class Runner:
         s = self.sensors
         missing = []
 
+        def fresh(st):
+            reported = getattr(st, "last_reported", None) or getattr(st, "last_updated", None)
+            return reported is None or ts - reported.timestamp() <= STALE_S
+
         def num(key):
             eid = s.get(key)
             st = get(eid) if eid else None
@@ -258,8 +263,7 @@ class Runner:
             if key in CORE_KEYS.values() and key != "ulko":
                 # a frozen Modbus value must not look like steady running: Home Assistant refreshes
                 # last_reported on every poll even when the value does not change
-                reported = getattr(st, "last_reported", None) or getattr(st, "last_updated", None)
-                if v is not None and reported is not None and ts - reported.timestamp() > STALE_S:
+                if v is not None and not fresh(st):
                     v = None
                 if v is None:
                     missing.append(eid or key)
@@ -269,7 +273,7 @@ class Runner:
             eid = s.get(key)
             st = get(eid) if eid else None
             v = _float(st)
-            if v is None:
+            if v is None or not fresh(st):
                 return None
             unit = st.attributes.get("unit_of_measurement")
             return v / 1000 if unit == "W" or (unit is None and key == "vesilampo" and v > 100) else v
@@ -286,6 +290,9 @@ class Runner:
         comp_on = comp is not None and comp.state == "on"
         dfr = get(s["sulatus"]) if s.get("sulatus") else None
         defrost = dfr is not None and dfr.state == "on"
+        for key, st in (("kompressori", comp), ("sulatus", dfr)):
+            if st is None or st.state not in ("on", "off") or not fresh(st):
+                missing.append(s.get(key) or key)
         p_el = kw("sahko")
         if p_el is None:
             missing.append(s.get("sahko"))
@@ -313,6 +320,7 @@ class Runner:
             force_ok=force_st is not None and force_st.state not in BAD,
             missing=tuple(m for m in missing if m),
         )
+        self.invalid = list(dict.fromkeys(sample.missing))
         self.missing = [eid for eid in [*self.sensors.values(), *self.faults] if eid and get(eid) is None]
         return sample
 

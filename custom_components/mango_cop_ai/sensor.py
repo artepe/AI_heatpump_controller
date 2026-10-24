@@ -43,6 +43,8 @@ def _status_attrs(runner):
         "kuivan_imun_taso": _r(b.eta_ref),
         "märkäraja": _r(b.wet_eta),
         "puuttuvat_entiteetit": runner.missing,
+        "ohjauksen_estävät_mittaukset": runner.invalid,
+        "viimeisin_päivitys": _ts(runner.last_tick),
         "mango_parametrit_löytyi": len(runner._entities),
         "mango_parametrit_saatavilla": sum(1 for p in b.params.values() if p.available),
     }
@@ -124,6 +126,10 @@ def _primary(runner, kp, w):
 SENSORS: list[tuple[str, str, str, str | None, Callable, Callable | None]] = [
     ("tilanne", "COP-tekoäly tilanne", "mdi:robot", None,
      lambda r: r.brain.status_text, _status_attrs),
+    ("mittausten_tila", "COP-tekoäly mittausten tila", "mdi:database-check", None,
+     lambda r: "Odottaa mittauksia" if r.last_tick is None else ("Puutteellinen" if r.invalid else "Kunnossa"),
+     lambda r: {"ohjauksen_estävät_mittaukset": r.invalid, "puuttuvat_entiteetit": r.missing,
+                "viimeisin_päivitys": _ts(r.last_tick)}),
     ("diagnoosi", "COP-tekoäly diagnoosi", "mdi:stethoscope", None,
      lambda r: r.brain.diagnosis["text"][:250],
      lambda r: {"koodi": r.brain.diagnosis["code"], **r.brain.diagnosis.get("details", {})}),
@@ -143,7 +149,7 @@ SENSORS: list[tuple[str, str, str, str | None, Callable, Callable | None]] = [
     ("sulatus", "COP-tekoäly sulatus", "mdi:snowflake-melt", None,
      lambda r: r.brain.defrost.status_text()[:250], _defrost_attrs),
 ]
-TEXT_SENSORS = ("tilanne", "diagnoosi", "sulatus")
+TEXT_SENSORS = ("tilanne", "diagnoosi", "sulatus", "mittausten_tila")
 
 
 async def async_setup_platform(hass, config, async_add_entities, discovery_info=None):
@@ -192,7 +198,7 @@ class StatusSensor(AiSensor):
         "historia", "hylätyt_parametrit", "tauko_asti", "kuivan_imun_taso", "märkäraja",
         "puuttuvat_entiteetit", "mango_parametrit_löytyi", "mango_parametrit_saatavilla", "koodi",
         "näennäinen_hyötysuhde", "märkänä",
-        "eev_askeleet",
+        "eev_askeleet", "ohjauksen_estävät_mittaukset", "viimeisin_päivitys",
         "viimeisimmät", "sulatuksia_24h", "tekoälyn_sulatuksia_24h", "arviot_24h",
         "sulatusenergia_24h_kwh", "kaistat_7vrk", "sulatusväli_kaistoittain", "säätimen_sulatusparametrit",
         "muutetut_sulatusvälit", "suositukset", "oma_huurrekynnys_k", "pakkosulatus_skripti",
