@@ -6,3 +6,15 @@ __pycache__/
 release-assets/
 # fetched for the end-to-end tests by tools/fetch_mango.py, not part of this repository
 custom_components/mango_tuya_local/
+
+# Secrets and local credentials: never commit
+.env
+.env.*
+!.env.example
+secrets.yaml
+*.pem
+*.key
+*.p12
+*credentials*.json
+*token*.json
+.storage/
