@@ -5,13 +5,16 @@ from datetime import timedelta
 from pathlib import Path
 
 import yaml
-from homeassistant.components import persistent_notification
+from homeassistant.components import frontend, persistent_notification
 from homeassistant.core import callback
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.template import Template
 from homeassistant.setup import async_setup_component
 from pytest_homeassistant_custom_component.common import MockConfigEntry, async_fire_time_changed
 
+from custom_components.mango_cop_ai.card import CARD_URL
 from custom_components.mango_cop_ai.const import DOMAIN
+from custom_components.mango_cop_ai.runner import STALE_S
 
 from .plant import DEFROST_VALUES, DFR_INTE_HW, Plant, to_states
 
@@ -34,12 +37,34 @@ class Rig:
         self.plant = Plant(hardware.values, **plant)
         self.logbook = []
         self.frozen = set()  # entities whose integration stopped updating
+        self.change_only = set()  # entities written only when they change (template, ESPHome, MQTT)
+        self.rename = {}  # the owner's entity id -> the id this installation uses
+        self.registered = False
         hass.bus.async_listen("logbook_entry", lambda e: self.logbook.append(e.data["message"]))
 
     def push(self):
+        # the owner's readings are Modbus entities, re-written on every poll even when unchanged;
+        # change_only entities are template-like: written when they change (and twice at start-up)
+        first = not self.registered
         for eid, (state, attrs) in to_states(self.plant.step()).items():
-            if eid not in self.frozen:
-                self.hass.states.async_set(eid, state, attrs)
+            eid = self.rename.get(eid, eid)
+            if first:
+                domain, object_id = eid.split(".", 1)
+                platform = "template" if eid in self.change_only else "modbus"
+                er.async_get(self.hass).async_get_or_create(
+                    domain, platform, f"rig_{object_id}", suggested_object_id=object_id)
+            if eid in self.frozen:
+                continue
+            old = self.hass.states.get(eid)
+            if eid in self.change_only and old is not None and old.state == state:
+                continue
+            self.hass.states.async_set(eid, state, attrs)
+        if first and self.change_only:
+            self.freezer.tick(timedelta(seconds=1))
+            for eid in self.change_only:  # a template writes the same state again while starting
+                old = self.hass.states.get(eid)
+                self.hass.states.async_set(eid, old.state, old.attributes)
+        self.registered = True
 
     async def start(self, conf=None):
         entry = MockConfigEntry(domain="mango_tuya_local", unique_id="TEST_DEVICE", title="Mango test", data=DATA)
@@ -189,10 +214,14 @@ async def test_yaml_settings_reach_the_brain(hass, freezer, mocked_client, hardw
 
 async def test_frozen_modbus_reading_stops_decisions(hass, freezer, mocked_client, hardware):
     rig = await Rig(hass, freezer, hardware).start({"tila": "Automaattinen"})
-    rig.frozen = {"sensor.eev_main_opening"}  # stuck at its last value
+    await rig.run(3)  # Modbus re-reports the unchanged EEV opening on every poll
+    assert "sensor.eev_main_opening" in rig.runner.polled
+    rig.frozen = {"sensor.eev_main_opening"}  # then the reading gets stuck
     await rig.run(2 * 60)
     assert hardware.writes == 0
     assert "sensor.eev_main_opening" in rig.state("sensor.cop_tekoaly_diagnoosi").state
+    blockers = rig.state("sensor.cop_tekoaly_tilanne").attributes["esteet"]
+    assert any(b["koodi"] == "mittaukset" and "sensor.eev_main_opening" in b["teksti"] for b in blockers)
 
 
 EXAMPLES = Path(__file__).parents[1] / "examples"
@@ -289,26 +318,135 @@ async def test_clean_coil_defrosts_lengthen_the_interval_through_mango(hass, fre
     assert hardware.values[DFR_INTE_HW[4]] == 35  # the unverified trial is undone
 
 
-async def test_stale_power_and_missing_defrost_block_measurements(hass, freezer, mocked_client, hardware):
+async def test_binary_sensors_that_report_only_changes_do_not_block(hass, freezer, mocked_client, hardware):
+    """1.1.1 regression: a template, ESPHome or MQTT binary sensor writes its state only when it changes,
+    so a defrost flag that stays off for hours looked stale and every minute was rejected."""
+    rig = Rig(hass, freezer, hardware)
+    comp, dfr = "binary_sensor.hp_m0_kompressori_rele", "binary_sensor.hp_defrost_active"
+    rig.change_only = {comp, dfr}
+    await rig.start({"tila": "Automaattinen"})
+    assert hass.states.get(dfr).last_reported > hass.states.get(dfr).last_updated  # re-written at start-up
+    assert await rig.run(4 * 60, until=lambda r: r.hw.values[OD6] == 16)
+    assert comp not in rig.runner.polled and dfr not in rig.runner.polled
+    assert hass.states.get(dfr).last_reported.timestamp() < rig.runner.last_tick - STALE_S  # silent, still valid
+    assert not rig.runner.invalid
+    assert rig.state("sensor.cop_tekoaly_mittausten_tila").state == "Kunnossa"
+
+
+async def test_polled_reading_that_stops_reporting_blocks_until_it_returns(hass, freezer, mocked_client, hardware):
     rig = await Rig(hass, freezer, hardware).start(None)
-    power = rig.runner.sensors["sahko"]
-    defrost = rig.runner.sensors["sulatus"]
-    rig.frozen.update((power, defrost))
+    speed = rig.runner.sensors["nopeus"]
+    await rig.run(3)
+    assert speed in rig.runner.polled
+    rig.frozen.add(speed)
     await rig.run(17)
-    assert power in rig.runner.invalid
-    assert defrost in rig.runner.invalid
-    assert rig.runner._sample(rig.runner.last_tick).p_el is None
+    assert speed in rig.runner.invalid
+    assert rig.runner._sample(rig.runner.last_tick).rps is None
     assert rig.state("sensor.cop_tekoaly_mittausten_tila").state == "Puutteellinen"
-    rig.hass.states.async_remove(defrost)
-    sample = rig.runner._sample(rig.runner.last_tick)
-    assert defrost in sample.missing
-    rig.frozen.discard(power)
-    await rig.run(1)
-    assert power not in rig.runner.invalid
-    assert defrost in rig.runner.invalid
     assert not rig.runner.brain.points[-1].stable
     rig.frozen.clear()
     await rig.run(1)
     assert not rig.runner.invalid
     assert rig.state("sensor.cop_tekoaly_mittausten_tila").state == "Kunnossa"
     assert hardware.writes == 0
+
+
+async def test_defrost_valve_stands_in_for_a_missing_defrost_sensor(hass, freezer, mocked_client, hardware):
+    """The owner's Modbus defrost valve, binary_sensor.hp_m0_defrost_venttiili, is used when
+    binary_sensor.hp_defrost_active does not exist."""
+    rig = Rig(hass, freezer, hardware)
+    rig.rename = {"binary_sensor.hp_defrost_active": "binary_sensor.hp_m0_defrost_venttiili"}
+    await rig.start({"tila": "Automaattinen"})
+    assert rig.runner.role_entity("sulatus") == "binary_sensor.hp_m0_defrost_venttiili"
+    await rig.run(4 * 60)
+    assert hardware.values[OD6] == 16
+    assert not rig.runner.invalid
+    assert "binary_sensor.hp_defrost_active" not in rig.runner.missing
+    assert any(p.defrost for p in rig.runner.brain.points)  # defrosts are seen through the stand-in
+
+
+async def test_no_defrost_signal_at_all_blocks_and_says_which(hass, freezer, mocked_client, hardware):
+    rig = await Rig(hass, freezer, hardware).start({
+        "tila": "Automaattinen",
+        "anturit": {"sulatus": "binary_sensor.ei_ole", "sulatus_varalla": "binary_sensor.ei_ole_kumpikaan"}})
+    await rig.run(90)
+    assert hardware.writes == 0
+    assert "binary_sensor.ei_ole" in rig.runner.invalid
+    assert rig.runner.missing.count("binary_sensor.ei_ole") == 1
+    assert "binary_sensor.ei_ole_kumpikaan" not in rig.runner.missing  # the stand-in is not listed twice
+    blockers = rig.state("sensor.cop_tekoaly_tilanne").attributes["esteet"]
+    assert blockers[0]["koodi"] == "mittaukset" and blockers[0]["taso"] == "virhe"
+    assert "binary_sensor.ei_ole" in blockers[0]["teksti"]
+
+
+async def test_blockers_explain_why_nothing_is_written(hass, freezer, mocked_client, hardware):
+    rig = await Rig(hass, freezer, hardware).start(None)
+    await rig.run(5)
+    attrs = rig.state("sensor.cop_tekoaly_tilanne").attributes
+    codes = [b["koodi"] for b in attrs["esteet"]]
+    assert codes[0] == "tarkkailu" and "tasainen" in codes
+    waiting = next(b for b in attrs["esteet"] if b["koodi"] == "tasainen")
+    assert "kompressori käynnistyi" in waiting["teksti"]  # the compressor relay changed at start-up
+    assert attrs["tarvitaan_min"] == 27 and attrs["tasaisia_min"] == 0
+    assert rig.state("sensor.cop_tekoaly_tilanne").state.startswith("Odottaa tasaista käyntiä (0/27 min): ")
+    assert await rig.run(180, until=lambda r: r.runner.brain.suggestion is not None)
+    codes = [b["koodi"] for b in rig.state("sensor.cop_tekoaly_tilanne").attributes["esteet"]]
+    assert codes == ["tarkkailu"]  # only the observe mode keeps it from acting now
+
+
+async def test_cycling_compressor_is_tuned_end_to_end(hass, freezer, mocked_client, hardware):
+    """An oversized unit in mild weather runs 40 min and stops for 20: every run starts with 15 settling
+    minutes, so no 45-minute window ever held 27 steady minutes and the AI never decided anything."""
+    rig = await Rig(hass, freezer, hardware, cycles=(40, 20)).start({"tila": "Automaattinen"})
+    accepted = lambda r: any(h["outcome"] == "hyväksytty" for h in r.runner.brain.history)  # noqa: E731
+    assert await rig.run(10 * 60, until=accepted)
+    assert hardware.values[OD6] == 16
+
+
+async def test_mode_changed_in_configuration_yaml_is_applied(hass, freezer, mocked_client, hardware, hass_storage):
+    hass_storage[DOMAIN] = {"version": 1, "key": DOMAIN, "data": {
+        "mode": "Tarkkailu", "yaml_mode": None, "defrost": {"mode": "Tarkkailu", "yaml_mode": None}}}
+    rig = await Rig(hass, freezer, hardware).start({"tila": "Automaattinen", "sulatus_tila": "Ehdota"})
+    assert rig.state("select.cop_tekoaly_tila").state == "Automaattinen"
+    assert rig.state("select.cop_tekoaly_sulatustila").state == "Ehdota"
+
+
+async def test_upgrade_keeps_the_mode_chosen_in_the_ui(hass, freezer, mocked_client, hardware, hass_storage):
+    """Storage from 1.1.1 has no yaml_mode: the mode picked in the UI must not be reset by the example
+    configuration's tila: Tarkkailu."""
+    hass_storage[DOMAIN] = {"version": 1, "key": DOMAIN, "data": {"mode": "Automaattinen"}}
+    rig = await Rig(hass, freezer, hardware).start({"tila": "Tarkkailu"})
+    assert rig.state("select.cop_tekoaly_tila").state == "Automaattinen"
+
+
+async def test_card_is_served_and_finds_the_entities(hass, freezer, mocked_client, hardware, hass_client,
+                                                     hass_ws_client):
+    rig = await Rig(hass, freezer, hardware).start(None)
+    assert CARD_URL in hass.data[frontend.DATA_EXTRA_MODULE_URL].urls
+    client = await hass_client()
+    resp = await client.get(CARD_URL)
+    assert resp.status == 200
+    js = await resp.text()
+    assert 'registry.define("cop-tekoaly-card", CopTekoalyCard)' in js
+    # defined only after the app has swapped in its scoped element registry (see the comment in the card)
+    assert 'whenDefined("home-assistant").then(register)' in js
+    ws = await hass_ws_client(hass)
+    await ws.send_json({"id": 1, "type": "mango_cop_ai/entities"})
+    msg = await ws.receive_json()
+    assert msg["success"]
+    entities = msg["result"]["entities"]
+    assert sorted(entities.values()) == sorted(ENTITIES)
+    assert entities["sensor.tilanne"] == "sensor.cop_tekoaly_tilanne"
+    assert entities["button.palauta"] == "button.cop_tekoaly_palauta_alkuperaiset"
+    assert rig.state("sensor.cop_tekoaly_tilanne").attributes["versio"] == msg["result"]["version"]
+
+
+def test_example_configuration_is_valid():
+    from custom_components.mango_cop_ai import CONFIG_SCHEMA
+
+    conf = yaml.safe_load((EXAMPLES / "configuration.yaml").read_text(encoding="utf-8"))
+    validated = CONFIG_SCHEMA(conf)[DOMAIN]
+    assert validated["anturit"]["sulatus_varalla"] == "binary_sensor.hp_m0_defrost_venttiili"
+    assert validated["tila"] == "Tarkkailu"
+    card = yaml.safe_load((EXAMPLES / "kortti.yaml").read_text(encoding="utf-8"))
+    assert card["cards"][0] == {"type": "custom:cop-tekoaly-card"}

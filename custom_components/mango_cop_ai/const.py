@@ -2,7 +2,7 @@
 
 DOMAIN = "mango_cop_ai"
 NAME = "Mango COP-tekoäly"
-VERSION = "1.1.1"
+VERSION = "1.2.0"
 MANGO_DOMAIN = "mango_tuya_local"
 
 MODE_OFF = "Pois"
@@ -10,6 +10,19 @@ MODE_OBSERVE = "Tarkkailu"
 MODE_PROPOSE = "Ehdota"
 MODE_AUTO = "Automaattinen"
 MODES = [MODE_OFF, MODE_OBSERVE, MODE_PROPOSE, MODE_AUTO]
+
+
+def initial_mode(stored: dict, configured: str | None) -> tuple[str, str | None]:
+    """(mode to start in, configuration.yaml mode to remember).
+
+    The mode chosen in the UI survives restarts. A mode written in configuration.yaml wins when it
+    has been changed there since the previous start; on the first start it is the starting mode.
+    """
+    remembered = stored.get("mode") if stored.get("mode") in MODES else None
+    if configured is not None and "yaml_mode" in stored and configured != stored["yaml_mode"]:
+        return configured, configured
+    return remembered or configured or MODE_OBSERVE, configured
+
 
 # Parameter keys are "<section>|<name>" exactly as in the Mango profile.
 MIN_OD = [f"EEV Set|Heat Min OD{i}" for i in range(1, 10)]
@@ -74,6 +87,7 @@ DEFAULT_SENSORS = {
     "huurre": "sensor.vilp_huurre_cop_havio",
     "kompressori": "binary_sensor.hp_m0_kompressori_rele",
     "sulatus": "binary_sensor.hp_defrost_active",
+    "sulatus_varalla": "binary_sensor.hp_m0_defrost_venttiili",  # used when "sulatus" does not exist
     "vastus": "binary_sensor.hp_electric_heater",
     "lamelli": "sensor.kylmaaine_lamellilampo_fin",
     "ulkoyksikko": "sensor.hp_module_ambient_temperature",

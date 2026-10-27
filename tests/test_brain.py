@@ -1,6 +1,7 @@
 """The decision core against the simulated heat pump, minute by minute, without Home Assistant."""
 
 import json
+import re
 
 from custom_components.mango_cop_ai.analysis import Settings
 from custom_components.mango_cop_ai.brain import Brain, Dismiss, Log, Notify, Param, Write
@@ -333,3 +334,42 @@ def test_dry_level_is_learned_from_clearly_superheated_suction():
     assert h.brain.eta_dry["n"] >= 60
     assert abs(h.brain.eta_ref - 0.68) < 0.02  # the simulated compressor's real efficiency
     assert h.writes == []
+
+
+def test_short_compressor_runs_still_lead_to_a_decision():
+    """35 min on / 25 min off: each run has at most 20 steady minutes after its 15 settling minutes, so a
+    single 45-minute window never holds the 27 needed. The steady minutes of earlier runs in the same
+    conditions are pooled."""
+    h = Harness(cycles=(35, 25))
+    assert h.run(18 * 60, until=lambda h: ("Heat Min OD6", "hyväksytty") in h.outcomes())
+    assert h.writes[0][1:] == (OD[6], 16, "probe")
+    assert h.value(OD[6]) == 16 and all(h.value(OD[i]) == v for i, v in ((5, 18), (7, 18)))
+
+
+def test_waiting_status_says_why_the_minute_is_not_steady():
+    h = Harness(mode=MODE_OBSERVE, cycles=(35, 25))  # runs start at minutes 60, 120, ...
+    h.run(70)
+    assert h.brain.points[-1].why == "kaynnistys"
+    assert re.fullmatch(r"Odottaa tasaista käyntiä \(\d+/27 min\): kompressori käynnistyi 9 min sitten, "
+                        r"tasaantuu 15 min", h.brain.status_text), h.brain.status_text
+    h.run(30)  # minute 99: stopped at 95
+    assert h.brain.points[-1].why == "seis"
+    assert h.brain.status_text.endswith(": kompressori seis")
+    whys = {p.why for p in h.brain.points}
+    assert {"historia", "kaynnistys", "seis", "buusti", None} <= whys
+
+
+def test_mode_from_configuration_yaml_wins_only_when_it_was_changed_there():
+    b = Brain()
+    assert b.mode == MODE_OBSERVE and b.defrost.mode == MODE_OBSERVE
+    b.set_mode(MODE_AUTO, 0.0)
+    st = json.loads(json.dumps(b.to_dict()))
+    assert Brain(stored=st).mode == MODE_AUTO  # the mode picked in the UI survives a restart
+    b = Brain(stored=st, mode=MODE_PROPOSE)  # tila: Ehdota written in configuration.yaml
+    assert b.mode == MODE_PROPOSE
+    b.set_mode(MODE_AUTO, 0.0)
+    st = json.loads(json.dumps(b.to_dict()))
+    assert Brain(stored=st, mode=MODE_PROPOSE).mode == MODE_AUTO  # unchanged yaml: the UI choice stays
+    legacy = {"mode": MODE_AUTO, "defrost": {"mode": MODE_AUTO}}  # storage written by 1.1.1
+    b = Brain(stored=legacy, mode=MODE_OBSERVE, defrost_mode=MODE_OBSERVE)
+    assert (b.mode, b.defrost.mode) == (MODE_AUTO, MODE_AUTO)

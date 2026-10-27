@@ -258,8 +258,8 @@ def test_defrost_state_survives_a_restart():
     h.run(3 * 60)
     before = len(h.records)
     stored = json.loads(json.dumps(h.brain.to_dict()))
-    h.brain = Brain(h.settings, stored=stored, mode=MODE_OBSERVE, defrost_mode=MODE_OBSERVE)
-    assert h.brain.defrost.mode == MODE_AUTO  # the stored mode wins over the configured one
+    h.brain = Brain(h.settings, stored=stored, mode=MODE_OBSERVE, defrost_mode=MODE_AUTO)
+    assert h.brain.defrost.mode == MODE_AUTO  # the same configuration: the stored mode carries on
     assert len(h.records) == before and h.brain.defrost.cycle["start"] is not None
     h.run(4 * 60)
     assert len([r for r in h.records if r["trigger"]["type"] == "tekoäly"]) >= 2

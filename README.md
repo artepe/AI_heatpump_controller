@@ -10,7 +10,7 @@ integration (Mango Energy monoblocks, 770-parameter Tuya profile).
 
 [Suomenkielinen ohje](README_FI.md)
 
-**Version 1.1.1 beta.** Tested against a real Home Assistant core and the real Mango Tuya Local
+**Version 1.2.0 beta.** Tested against a real Home Assistant core and the real Mango Tuya Local
 integration over its simulated Tuya transport, with a simulated heat pump. The EEV writes have
 been confirmed on a physical unit (Heat Sv5 changed the controller's superheat target as
 expected); the defrost control has not yet run on a physical unit.
@@ -76,15 +76,18 @@ temperature thresholds.
   device refuses is left alone for a week.
 - **Restarts are safe:** a Home Assistant restart in the middle of a trial restores the
   trial value.
-- **Missing or frozen data stops decisions:** a core reading that is unavailable or has not
-  refreshed for 15 min stops all decisions.
+- **Missing or frozen data stops decisions:** a core reading that is unavailable stops all
+  decisions, and so does a Modbus reading that has not been reported for 15 min (Modbus writes
+  on every poll). Template, ESPHome and MQTT entities report only changes and are never judged
+  by age.
 - **Everything is logged:** every decision is written to the logbook with its reasons, and
   the important ones also raise a notification.
 
 ## Modes
 
-The mode is set with `select.cop_tekoaly_tila`. It starts in observe mode, and the last
-selected mode survives restarts.
+The mode is set from the card or with `select.cop_tekoaly_tila`. It starts in observe mode, and
+the last selected mode survives restarts. A `tila:` or `sulatus_tila:` value changed in
+`configuration.yaml` is applied at the next start.
 
 | Mode | Behaviour |
 |---|---|
@@ -119,8 +122,38 @@ mango_cop_ai:
 
 The Mango number entities are found by their unique IDs, so no entity IDs need to be
 configured. The default source sensors are the author's entity names (see
-[examples/configuration.yaml](examples/configuration.yaml)); map your own under `anturit:`. A
-dashboard card is in [examples/kortti.yaml](examples/kortti.yaml).
+[examples/configuration.yaml](examples/configuration.yaml)); map your own under `anturit:`.
+
+## Dashboard card
+
+The integration serves its own card and loads it on every dashboard, so no resource needs to be
+added:
+
+```yaml
+type: custom:cop-tekoaly-card
+title: COP-tekoäly        # optional
+show_controls: true       # modes, approve / reject, restore
+show_defrost: true
+show_history: true
+```
+
+It shows what the AI is doing, why it is not adjusting right now (each blocker with what to do
+about it), a sight glass for suction wetness, COP readouts, both mode switches, a pending
+proposal with approve and reject buttons, the coil and last defrost, changed values and recent
+decisions. A markdown version with more detail is in
+[examples/kortti_tekninen.yaml](examples/kortti_tekninen.yaml).
+
+## When it does nothing
+
+The card's *Miksi tekoäly ei säädä nyt* list (attribute `esteet` of `sensor.cop_tekoaly_tilanne`)
+names every reason. Version 1.2.0 fixed three causes that could keep it waiting forever:
+
+- binary sensors that report only changes (template, ESPHome, MQTT) were taken as stale after
+  15 min, so a defrost flag that stayed off blocked every minute;
+- a missing `binary_sensor.hp_defrost_active` blocked everything; the Modbus defrost valve
+  `binary_sensor.hp_m0_defrost_venttiili` now stands in for it;
+- with short compressor runs (for example 40 min on, 20 off) no 45-minute window ever held 27
+  steady minutes; steady minutes of earlier runs in the same conditions now count.
 
 ## Entities
 
@@ -157,8 +190,9 @@ The tests cover:
 - the defrost control against a simulated controller that defrosts from the Mango defrost
   parameters, with weather-dependent frost, fan and speed changes and a forced-defrost script;
 - end-to-end runs in a real Home Assistant core: observe, propose, automatic, rollback, fault,
-  refused writes, restarts, frozen data, YAML settings, forced defrost through a script and a
-  defrost interval written through Mango.
+  refused writes, restarts, frozen data, sensors that report only changes, a cycling compressor,
+  YAML settings and modes, forced defrost through a script, a defrost interval written through
+  Mango, and the dashboard card being served with its entity map.
 
 ## License
 
@@ -169,8 +203,9 @@ parameters; use it at your own risk and start in observe mode.
 
 `sensor.cop_tekoaly_mittausten_tila` reports waiting, healthy or incomplete
 measurements (in Finnish). Its attributes list required measurements blocking
-control, missing entities and the last processing time. Electrical power and
-compressor/defrost states older than 15 minutes cannot qualify as stable operation.
-Missing or unknown compressor/defrost states also block stable operation.
-Monitoring resumes automatically when the readings recover. Outdoor temperatures
-are exempt from this freshness limit. Both example dashboards include this sensor.
+control, missing entities and the last processing time. A reading counts as frozen
+only when it comes from Modbus, which writes on every poll, and has been silent for
+15 minutes; template, ESPHome and MQTT entities report only changes, so a long silence
+from them is normal. Missing or unknown
+compressor/defrost states block stable operation. Monitoring resumes automatically
+when the readings recover.

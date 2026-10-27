@@ -53,6 +53,7 @@ from .const import (
     MODE_OFF,
     MODE_PROPOSE,
     MODES,
+    initial_mode,
 )
 
 MINUTE, HOUR, DAY = 60.0, 3600.0, 86400.0
@@ -99,10 +100,11 @@ def _r(v, digits=1):
 
 
 class Defrost:
-    def __init__(self, host, stored: dict | None = None, mode: str = MODE_OBSERVE):
+    def __init__(self, host, stored: dict | None = None, mode: str | None = None):
+        """mode: the defrost mode written in configuration.yaml (None = not written)."""
         st = stored or {}
         self.host = host  # the Brain: settings, parameters, write budget, originals, restore queue
-        self.mode = st.get("mode") if st.get("mode") in MODES else mode
+        self.mode, self.yaml_mode = initial_mode(st, mode)
         self.records: list[dict] = list(st.get("records", []))[-150:]
         self.action: dict | None = st.get("action")
         self.cycle: dict = st.get("cycle") or self._new_cycle(None)
@@ -128,7 +130,8 @@ class Defrost:
         self.resume = True
 
     def to_dict(self) -> dict:
-        return {"mode": self.mode, "records": self.records, "action": self.action, "cycle": self.cycle,
+        return {"mode": self.mode, "yaml_mode": self.yaml_mode, "records": self.records, "action": self.action,
+                "cycle": self.cycle,
                 "current": self.current, "misses": self.misses, "observed": self.observed,
                 "notified": self.notified, "target": self.target, "target_base": self.target_base,
                 "forced": self.forced, "force_log": self.force_log, "force_fail": self.force_fail,

@@ -1,59 +1,10 @@
+# COP-tekoäly: integraatio lataa kortin itse, resurssia ei tarvitse lisätä.
+# Liitä: Muokkaa kojelautaa → Lisää kortti → Manuaalinen.
 type: vertical-stack
 cards:
-  - type: entities
-    title: COP-tekoäly
-    state_color: true
-    entities:
-      - entity: select.cop_tekoaly_tila
-        name: Tila
-      - entity: sensor.cop_tekoaly_tilanne
-        name: Tilanne
-      - entity: sensor.cop_tekoaly_mittausten_tila
-        name: Mittausten tila
-      - entity: sensor.cop_tekoaly_diagnoosi
-        name: Diagnoosi
-      - entity: sensor.cop_tekoaly_cop
-        name: COP (tunti, kylmäpiiri)
-      - entity: sensor.cop_tekoaly_cop_poikkeama
-        name: Poikkeama opitusta
-      - entity: sensor.cop_tekoaly_naennainen_hyotysuhde
-        name: Näennäinen hyötysuhde (märkä > 85 %)
-      - entity: sensor.cop_tekoaly_kirjoitukset_24_h
-        name: Kirjoitukset 24 h
-      - type: section
-        label: Sulatus
-      - entity: select.cop_tekoaly_sulatustila
-        name: Sulatustila
-      - entity: sensor.cop_tekoaly_sulatustarve
-        name: Sulatustarve (100 % = sulata)
-      - entity: sensor.cop_tekoaly_sulatus
-        name: Viimeisin sulatus
-      - type: buttons
-        entities:
-          - entity: button.cop_tekoaly_hyvaksy_ehdotus
-            name: Hyväksy
-          - entity: button.cop_tekoaly_hylkaa_ehdotus
-            name: Hylkää
-          - entity: button.cop_tekoaly_palauta_alkuperaiset
-            name: Palauta
-  - type: history-graph
-    title: Imukaasu ja EEV
-    hours_to_show: 24
-    entities:
-      - entity: sensor.cop_tekoaly_naennainen_hyotysuhde
-        name: Näennäinen hyötysuhde
-      - entity: sensor.eev_main_opening
-        name: EEV-avaus
-  - type: history-graph
-    title: Huurre ja sulatukset
-    hours_to_show: 24
-    entities:
-      - entity: sensor.cop_tekoaly_sulatustarve
-        name: Sulatustarve
-      - entity: binary_sensor.hp_defrost_active
-        name: Sulatus
+  - type: custom:cop-tekoaly-card
   - type: logbook
     title: Tekoälyn päätökset
-    hours_to_show: 72
+    hours_to_show: 48
     target:
       entity_id: sensor.cop_tekoaly_tilanne

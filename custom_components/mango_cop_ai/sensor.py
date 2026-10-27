@@ -11,7 +11,7 @@ from homeassistant.core import callback
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 
 from .brain import short
-from .const import DOMAIN, SIGNAL_UPDATE
+from .const import DOMAIN, SIGNAL_UPDATE, VERSION
 
 
 def _r(v, digits=2):
@@ -25,7 +25,15 @@ def _ts(t):
 def _status_attrs(runner):
     b = runner.brain
     st = b.status()
+    steady, need = b.steady_minutes()
     return {
+        "esteet": runner.blockers(),
+        "tasaisia_min": steady,
+        "tarvitaan_min": need,
+        "odotuksen_syy": b.waiting_reason(),
+        "seuraava_muutos_aikaisintaan": _ts(st["cooldown_until"]),
+        "sulatustila": b.defrost.mode,
+        "versio": VERSION,
         "tila": st["mode"],
         "toimenpide": st["action"],
         "ehdotus": st["pending"],
@@ -193,6 +201,8 @@ class StatusSensor(AiSensor):
     """Text sensors with large attributes: keep the attributes out of the recorder database."""
 
     _unrecorded_attributes = frozenset({
+        "esteet", "tasaisia_min", "tarvitaan_min", "odotuksen_syy", "seuraava_muutos_aikaisintaan",
+        "sulatustila", "versio",
         "tila", "toimenpide", "ehdotus", "hyväksytty_odottaa", "tekisi", "kirjoituksia_24h",
         "kirjoituksia_yhteensä", "kirjoitusraja_vrk", "muutetut_arvot", "opitut_vyöhykkeet", "alarajat",
         "historia", "hylätyt_parametrit", "tauko_asti", "kuivan_imun_taso", "märkäraja",

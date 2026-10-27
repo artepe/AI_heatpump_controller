@@ -6,7 +6,8 @@ Configured in configuration.yaml. The minimum is one line:
     mango_cop_ai:
 
 which starts both the EEV and the defrost control in observe mode (Tarkkailu) with the owner's
-entity names. See README_FI.md.
+entity names. The dashboard card custom:cop-tekoaly-card is served by the integration itself.
+See README_FI.md.
 """
 
 from __future__ import annotations
@@ -22,7 +23,8 @@ from homeassistant.helpers.storage import Store
 from homeassistant.helpers.typing import ConfigType
 
 from .analysis import Settings
-from .const import DEFAULT_FAULTS, DEFAULT_SENSORS, DOMAIN, MODE_OBSERVE, MODES, STORAGE_KEY, STORAGE_VERSION
+from .card import async_setup_card
+from .const import DEFAULT_FAULTS, DEFAULT_SENSORS, DOMAIN, MODES, STORAGE_KEY, STORAGE_VERSION
 from .runner import Runner
 
 _LOGGER = logging.getLogger(__name__)
@@ -69,8 +71,9 @@ CONFIG_SCHEMA = vol.Schema(
             None,
             vol.Schema(
                 {
-                    vol.Optional("tila", default=MODE_OBSERVE): vol.In(MODES),
-                    vol.Optional("sulatus_tila", default=MODE_OBSERVE): vol.In(MODES),
+                    # no default: an unset mode keeps the one chosen in the UI (Tarkkailu at first)
+                    vol.Optional("tila"): vol.In(MODES),
+                    vol.Optional("sulatus_tila"): vol.In(MODES),
                     vol.Optional("pakkosulatus"): cv.entity_id,
                     vol.Optional("anturit", default={}): vol.Schema(
                         {vol.Optional(k): cv.entity_id for k in DEFAULT_SENSORS}
@@ -100,5 +103,6 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     runner.async_start()
     for platform in PLATFORMS:
         hass.async_create_task(async_load_platform(hass, platform, DOMAIN, {}, config))
+    await async_setup_card(hass)
     _LOGGER.info("Mango COP-tekoäly käynnistyi: EEV %s, sulatus %s", runner.brain.mode, runner.brain.defrost.mode)
     return True

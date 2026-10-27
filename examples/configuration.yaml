@@ -1,8 +1,8 @@
 # Mango COP-tekoäly: kaikki asetukset oletusarvoineen. Kaikki on valinnaista;
 # pelkkä rivi "mango_cop_ai:" riittää, jos anturien nimet ovat samat.
 mango_cop_ai:
-  tila: Tarkkailu                 # EEV-säätö, vain ensimmäinen käynnistys
-  sulatus_tila: Tarkkailu         # sulatusohjaus, vain ensimmäinen käynnistys
+  tila: Tarkkailu                 # EEV-säätö: otetaan käyttöön, kun arvo muuttuu tässä
+  sulatus_tila: Tarkkailu         # sulatusohjaus: samoin
   # pakkosulatus: script.sulatus_pakotettu_moduuli_0   # oletuksena tämä tai "Sulatus pakotettu" -niminen
   anturit:                        # vaihda, jos nimesi ovat toiset
     sahko: sensor.invt_pout_power
@@ -22,6 +22,7 @@ mango_cop_ai:
     huurre: sensor.vilp_huurre_cop_havio
     kompressori: binary_sensor.hp_m0_kompressori_rele
     sulatus: binary_sensor.hp_defrost_active
+    sulatus_varalla: binary_sensor.hp_m0_defrost_venttiili   # käytetään, jos edellistä ei ole
     vastus: binary_sensor.hp_electric_heater
     lamelli: sensor.kylmaaine_lamellilampo_fin
     ulkoyksikko: sensor.hp_module_ambient_temperature
