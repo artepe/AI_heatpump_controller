@@ -27,6 +27,8 @@ Home Assistantin integraatio, joka toimii Raspberry Pi:llä HA:n sisällä. Se v
 4. Lisää kojelautaan kortti: Muokkaa kojelautaa → Lisää kortti → hae **COP-tekoäly**, tai Manuaalinen → `type: custom:cop-tekoaly-card`. Katso [Kojelautakortti](#kojelautakortti).
    Markdown-pohjainen teknisempi kortti on edelleen [`examples/kortti_tekninen.yaml`](examples/kortti_tekninen.yaml): COP kummaltakin puolelta, imun märkyys, käynnissä oleva toimenpide, EEV:n 9 vyöhykkeen taulukko tekoälyn muutoksineen, kylmäpiirin arvot, käyrät ja päätöshistoria. Fontti on tasalevyinen, jos card-mod on asennettu.
 
+Mango Tuya Local -integraation pitää olla asennettuna ja parametrien näkyvissä. Tekoäly löytää number-entiteetit itse niiden tunnisteista, joten entiteetti-id:itä ei tarvitse kirjoittaa.
+
 ## Kojelautakortti
 
 Integraatio tuo mukanaan oman kortin ja lataa sen itse jokaiselle kojelaudalle. Resurssia ei tarvitse lisätä, eikä HACS-korttia asentaa.
@@ -75,8 +77,6 @@ Versio 1.2.0 korjasi kolme vikaa, joiden takia tekoäly saattoi jäädä odottam
 - **Muutoksista raportoivat anturit tulkittiin vanhentuneiksi.** Template-, ESPHome- ja MQTT-anturit kirjoittavat tilansa vain, kun se muuttuu. Tunteja pois päällä ollut sulatusanturi näytti siksi vanhentuneelta, ja jokainen minuutti hylättiin. Nyt ikäraja koskee vain lähteitä, jotka toistavat muuttumattoman arvon, kuten Modbusia.
 - **Sulatusanturin nimi.** Jos `binary_sensor.hp_defrost_active` puuttui, kaikki pysähtyi. Nyt tilalla käytetään Modbusin sulatusventtiiliä `binary_sensor.hp_m0_defrost_venttiili`.
 - **Lyhyet käyntijaksot.** Lauhalla säällä kompressori käy esimerkiksi 40 min ja seisoo 20 min. Jokainen käynnistys vie 15 min tasaantumiseen, joten 45 minuutin ikkunaan ei koskaan kertynyt 27 tasaista minuuttia. Nyt saman ulkolämmön aiempien käyntijaksojen tasaiset minuutit lasketaan yhteen.
-
-Mango Tuya Local -integraation pitää olla asennettuna ja parametrien näkyvissä. Tekoäly löytää number-entiteetit itse niiden tunnisteista, joten entiteetti-id:itä ei tarvitse kirjoittaa.
 
 ## Käyttö
 
