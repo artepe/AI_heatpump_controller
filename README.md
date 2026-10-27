@@ -77,8 +77,9 @@ temperature thresholds.
 - **Restarts are safe:** a Home Assistant restart in the middle of a trial restores the
   trial value.
 - **Missing or frozen data stops decisions:** a core reading that is unavailable stops all
-  decisions, and so does a reading from a polled source (Modbus) that has not been reported for
-  15 min. Sources that report only changes (template, ESPHome, MQTT) are never judged by age.
+  decisions, and so does a Modbus reading that has not been reported for 15 min (Modbus writes
+  on every poll). Template, ESPHome and MQTT entities report only changes and are never judged
+  by age.
 - **Everything is logged:** every decision is written to the logbook with its reasons, and
   the important ones also raise a notification.
 
@@ -203,8 +204,8 @@ parameters; use it at your own risk and start in observe mode.
 `sensor.cop_tekoaly_mittausten_tila` reports waiting, healthy or incomplete
 measurements (in Finnish). Its attributes list required measurements blocking
 control, missing entities and the last processing time. A reading counts as frozen
-only when its source is known to re-report unchanged values (a polled integration such
-as Modbus) and it has been silent for 15 minutes; template, ESPHome and MQTT entities
-report only changes, so a long silence from them is normal. Missing or unknown
+only when it comes from Modbus, which writes on every poll, and has been silent for
+15 minutes; template, ESPHome and MQTT entities report only changes, so a long silence
+from them is normal. Missing or unknown
 compressor/defrost states block stable operation. Monitoring resumes automatically
 when the readings recover.

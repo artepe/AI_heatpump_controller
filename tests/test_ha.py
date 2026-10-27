@@ -7,6 +7,7 @@ from pathlib import Path
 import yaml
 from homeassistant.components import frontend, persistent_notification
 from homeassistant.core import callback
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.template import Template
 from homeassistant.setup import async_setup_component
 from pytest_homeassistant_custom_component.common import MockConfigEntry, async_fire_time_changed
@@ -38,18 +39,32 @@ class Rig:
         self.frozen = set()  # entities whose integration stopped updating
         self.change_only = set()  # entities written only when they change (template, ESPHome, MQTT)
         self.rename = {}  # the owner's entity id -> the id this installation uses
+        self.registered = False
         hass.bus.async_listen("logbook_entry", lambda e: self.logbook.append(e.data["message"]))
 
     def push(self):
-        # every other entity is re-written every minute like a polled Modbus register
+        # the owner's readings are Modbus entities, re-written on every poll even when unchanged;
+        # change_only entities are template-like: written when they change (and twice at start-up)
+        first = not self.registered
         for eid, (state, attrs) in to_states(self.plant.step()).items():
             eid = self.rename.get(eid, eid)
+            if first:
+                domain, object_id = eid.split(".", 1)
+                platform = "template" if eid in self.change_only else "modbus"
+                er.async_get(self.hass).async_get_or_create(
+                    domain, platform, f"rig_{object_id}", suggested_object_id=object_id)
             if eid in self.frozen:
                 continue
             old = self.hass.states.get(eid)
             if eid in self.change_only and old is not None and old.state == state:
                 continue
             self.hass.states.async_set(eid, state, attrs)
+        if first and self.change_only:
+            self.freezer.tick(timedelta(seconds=1))
+            for eid in self.change_only:  # a template writes the same state again while starting
+                old = self.hass.states.get(eid)
+                self.hass.states.async_set(eid, old.state, old.attributes)
+        self.registered = True
 
     async def start(self, conf=None):
         entry = MockConfigEntry(domain="mango_tuya_local", unique_id="TEST_DEVICE", title="Mango test", data=DATA)
@@ -306,9 +321,11 @@ async def test_clean_coil_defrosts_lengthen_the_interval_through_mango(hass, fre
 async def test_binary_sensors_that_report_only_changes_do_not_block(hass, freezer, mocked_client, hardware):
     """1.1.1 regression: a template, ESPHome or MQTT binary sensor writes its state only when it changes,
     so a defrost flag that stays off for hours looked stale and every minute was rejected."""
-    rig = await Rig(hass, freezer, hardware).start({"tila": "Automaattinen"})
-    comp, dfr = rig.runner.sensors["kompressori"], rig.runner.sensors["sulatus"]
+    rig = Rig(hass, freezer, hardware)
+    comp, dfr = "binary_sensor.hp_m0_kompressori_rele", "binary_sensor.hp_defrost_active"
     rig.change_only = {comp, dfr}
+    await rig.start({"tila": "Automaattinen"})
+    assert hass.states.get(dfr).last_reported > hass.states.get(dfr).last_updated  # re-written at start-up
     assert await rig.run(4 * 60, until=lambda r: r.hw.values[OD6] == 16)
     assert comp not in rig.runner.polled and dfr not in rig.runner.polled
     assert hass.states.get(dfr).last_reported.timestamp() < rig.runner.last_tick - STALE_S  # silent, still valid

@@ -46,10 +46,11 @@ CORE_KEYS = {"p_el": "sahko", "rps": "nopeus", "te": "hoyrystyminen", "tc": "lau
 # roles with a stand-in: the second entity is used when the first one does not exist
 FALLBACKS = {"ulko": "ulko_varalla", "sulatus": "sulatus_varalla"}
 STATUS_ENTITY = "sensor.cop_tekoaly_tilanne"
-# A reading from a polled source (Modbus, coordinators) that has not been reported for this long counts
-# as missing. Sources that report only changes (template, ESPHome, MQTT, most binary sensors) are never
-# judged by age: a defrost flag that stays off for hours is a valid reading.
+# A reading from an integration that writes its state on every poll, also when nothing changed, counts as
+# missing when it has not been reported for STALE_S: the polling has stopped. Every other source (template,
+# ESPHome, MQTT, ...) may stay silent for hours while its value holds, so its age says nothing.
 STALE_S = 15 * 60
+POLLED_PLATFORMS = {"modbus"}
 
 
 def _float(state) -> float | None:
@@ -77,7 +78,7 @@ class Runner:
         self.missing: list[str] = []
         self.last_tick = None
         self.invalid: list[str] = []
-        self.polled: set[str] = set()  # entities seen re-reporting an unchanged value (polled sources)
+        self._platforms: dict[str, str] = {}  # entity id -> integration that provides it ("" = unknown)
 
     # ------------------------------------------------------------------ lifecycle
     @callback
@@ -259,22 +260,29 @@ class Runner:
         return True, None
 
     # ------------------------------------------------------------------ sensors
-    def fresh(self, eid: str | None, st, ts: float) -> bool:
-        """False only for a reading from a polled source that has stopped reporting.
+    @property
+    def polled(self) -> set[str]:
+        """Entities whose integration writes every poll, so that silence means a frozen reading."""
+        return {eid for eid, platform in self._platforms.items() if platform in POLLED_PLATFORMS}
 
-        Home Assistant refreshes last_reported every time an integration writes a state, also when
-        nothing changed; last_updated moves only on a change. A source caught re-reporting an unchanged
-        value (last_reported later than last_updated) polls, like Modbus, so its silence means a
-        frozen reading. A source that only reports changes (template, ESPHome, MQTT, most binary
-        sensors) is silent whenever the value holds: its age says nothing, so it is never stale.
+    def _platform(self, eid: str) -> str:
+        if eid not in self._platforms:
+            entry = er.async_get(self.hass).async_get(eid)
+            self._platforms[eid] = entry.platform if entry is not None else ""
+        return self._platforms[eid]
+
+    def fresh(self, eid: str | None, st, ts: float) -> bool:
+        """False only for a reading from a polling integration that has stopped reporting.
+
+        Home Assistant refreshes last_reported whenever an integration writes a state, also when
+        nothing changed. Modbus writes on every poll, so a Modbus reading silent for STALE_S is
+        frozen. Template, ESPHome and MQTT entities write only when the value changes (and a template
+        may write twice while starting): a long silence from them is normal, so they are never stale.
         """
         reported = getattr(st, "last_reported", None)
-        updated = getattr(st, "last_updated", None)
-        if eid is None or reported is None or updated is None:
+        if eid is None or reported is None or self._platform(eid) not in POLLED_PLATFORMS:
             return True
-        if reported > updated:
-            self.polled.add(eid)
-        return eid not in self.polled or ts - reported.timestamp() <= STALE_S
+        return ts - reported.timestamp() <= STALE_S
 
     def role_entity(self, key: str) -> str | None:
         """The entity for a role: the configured one, or its stand-in when the first does not exist."""

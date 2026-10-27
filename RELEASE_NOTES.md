@@ -4,8 +4,8 @@ Fixed: three causes that could keep the controller waiting for steady running fo
 
 - Binary sensors that report only changes (template, ESPHome, MQTT) were treated as stale after
   15 minutes, so a defrost flag that stayed off, or a compressor relay that stayed on, rejected
-  every minute (regression in 1.1.1). A reading now counts as frozen only when its source is known
-  to re-report unchanged values, such as Modbus.
+  every minute (regression in 1.1.1). A reading now counts as frozen only when it comes from
+  Modbus, which writes on every poll; other sources may stay silent while their value holds.
 - A missing `binary_sensor.hp_defrost_active` blocked everything. The Modbus defrost valve
   `binary_sensor.hp_m0_defrost_venttiili` (new setting `sulatus_varalla`) now stands in for it.
 - With short compressor runs, such as 40 min on and 20 min off in mild weather, no 45-minute

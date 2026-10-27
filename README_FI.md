@@ -74,7 +74,7 @@ Katso kortin kohta **Miksi tekoäly ei säädä nyt**. Sama luettelo on anturin 
 
 Versio 1.2.0 korjasi kolme vikaa, joiden takia tekoäly saattoi jäädä odottamaan ikuisesti:
 
-- **Muutoksista raportoivat anturit tulkittiin vanhentuneiksi.** Template-, ESPHome- ja MQTT-anturit kirjoittavat tilansa vain, kun se muuttuu. Tunteja pois päällä ollut sulatusanturi näytti siksi vanhentuneelta, ja jokainen minuutti hylättiin. Nyt ikäraja koskee vain lähteitä, jotka toistavat muuttumattoman arvon, kuten Modbusia.
+- **Muutoksista raportoivat anturit tulkittiin vanhentuneiksi.** Template-, ESPHome- ja MQTT-anturit kirjoittavat tilansa vain, kun se muuttuu. Tunteja pois päällä ollut sulatusanturi näytti siksi vanhentuneelta, ja jokainen minuutti hylättiin. Nyt ikäraja koskee vain Modbus-entiteettejä, jotka kirjoittavat arvonsa jokaisella kyselyllä.
 - **Sulatusanturin nimi.** Jos `binary_sensor.hp_defrost_active` puuttui, kaikki pysähtyi. Nyt tilalla käytetään Modbusin sulatusventtiiliä `binary_sensor.hp_m0_defrost_venttiili`.
 - **Lyhyet käyntijaksot.** Lauhalla säällä kompressori käy esimerkiksi 40 min ja seisoo 20 min. Jokainen käynnistys vie 15 min tasaantumiseen, joten 45 minuutin ikkunaan ei koskaan kertynyt 27 tasaista minuuttia. Nyt saman ulkolämmön aiempien käyntijaksojen tasaiset minuutit lasketaan yhteen.
 
@@ -285,10 +285,10 @@ luettelee puuttuvat, virheelliset tai jumiutuneet pakolliset mittaukset, ja
 `viimeisin_päivitys` kertoo viimeisimmän käsittelyajan. Valinnainen puuttuva
 anturi näkyy attribuutissa `puuttuvat_entiteetit`, mutta ei yksin estä ohjausta.
 
-Jumiutunut lukema tunnistetaan vain lähteistä, jotka kirjoittavat arvonsa
-jokaisella kyselyllä silloinkin, kun se ei muutu, kuten Modbus. Jos tällainen
-lähde on ollut 15 minuuttia hiljaa, lukema ei kelpaa. Template-, ESPHome- ja
-MQTT-anturit kirjoittavat tilansa vain muuttuessaan, joten niiden pitkä hiljaisuus
-on normaalia eikä estä mitään. Myös tuntematon tai puuttuva kompressorin tai
+Jumiutunut lukema tunnistetaan vain Modbus-entiteeteistä. Modbus kirjoittaa
+arvon jokaisella kyselyllä silloinkin, kun se ei muutu, joten 15 minuutin
+hiljaisuus tarkoittaa, että kysely on pysähtynyt. Template-, ESPHome- ja
+MQTT-anturit kirjoittavat tilansa vain muuttuessaan, joten niiden pitkä
+hiljaisuus on normaalia eikä estä mitään. Myös tuntematon tai puuttuva kompressorin tai
 sulatuksen tila estää tasaiseksi käynniksi hyväksymisen. Mittausten palautuessa
 seuranta jatkuu automaattisesti.
