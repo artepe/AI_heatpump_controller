@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import math
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 
 import voluptuous as vol
 from homeassistant.components import persistent_notification
@@ -27,9 +27,15 @@ from .const import (
     DEFAULT_SENSORS,
     DOMAIN,
     MANGO_DOMAIN,
+    MIN_OD,
+    MODE_AUTO,
+    MODE_OBSERVE,
+    MODE_OFF,
+    MODE_PROPOSE,
     NAME,
     PARAMETER_IDS,
     SIGNAL_UPDATE,
+    SV,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -37,8 +43,13 @@ BAD = (STATE_UNAVAILABLE, STATE_UNKNOWN, "", "none", None)
 # sensors whose absence stops all decisions (Sample field -> config key)
 CORE_KEYS = {"p_el": "sahko", "rps": "nopeus", "te": "hoyrystyminen", "tc": "lauhtuminen",
              "t_suc": "imukaasu", "t_dis": "kuumakaasu", "eev": "eev", "t_out": "ulko", "t_sup": "menovesi"}
+# roles with a stand-in: the second entity is used when the first one does not exist
+FALLBACKS = {"ulko": "ulko_varalla", "sulatus": "sulatus_varalla"}
 STATUS_ENTITY = "sensor.cop_tekoaly_tilanne"
-STALE_S = 15 * 60  # a core reading not refreshed for this long counts as missing
+# A reading from a polled source (Modbus, coordinators) that has not been reported for this long counts
+# as missing. Sources that report only changes (template, ESPHome, MQTT, most binary sensors) are never
+# judged by age: a defrost flag that stays off for hours is a valid reading.
+STALE_S = 15 * 60
 
 
 def _float(state) -> float | None:
@@ -66,6 +77,7 @@ class Runner:
         self.missing: list[str] = []
         self.last_tick = None
         self.invalid: list[str] = []
+        self.polled: set[str] = set()  # entities seen re-reporting an unchanged value (polled sources)
 
     # ------------------------------------------------------------------ lifecycle
     @callback
@@ -188,8 +200,8 @@ class Runner:
         if get(DEFAULT_FORCE_SCRIPT) is not None:
             return DEFAULT_FORCE_SCRIPT
         for st in self.hass.states.async_all("script"):
-            name = str(st.attributes.get("friendly_name") or st.entity_id).lower()
-            if "sulatus" in name and "pakot" in name:
+            name = f"{st.attributes.get('friendly_name') or ''} {st.entity_id}".lower()
+            if ("sulatus" in name and "pakot" in name) or ("defrost" in name and "forc" in name):
                 return st.entity_id
         return None
 
@@ -247,23 +259,43 @@ class Runner:
         return True, None
 
     # ------------------------------------------------------------------ sensors
+    def fresh(self, eid: str | None, st, ts: float) -> bool:
+        """False only for a reading from a polled source that has stopped reporting.
+
+        Home Assistant refreshes last_reported every time an integration writes a state, also when
+        nothing changed; last_updated moves only on a change. A source caught re-reporting an unchanged
+        value (last_reported later than last_updated) polls, like Modbus, so its silence means a
+        frozen reading. A source that only reports changes (template, ESPHome, MQTT, most binary
+        sensors) is silent whenever the value holds: its age says nothing, so it is never stale.
+        """
+        reported = getattr(st, "last_reported", None)
+        updated = getattr(st, "last_updated", None)
+        if eid is None or reported is None or updated is None:
+            return True
+        if reported > updated:
+            self.polled.add(eid)
+        return eid not in self.polled or ts - reported.timestamp() <= STALE_S
+
+    def role_entity(self, key: str) -> str | None:
+        """The entity for a role: the configured one, or its stand-in when the first does not exist."""
+        eid = self.sensors.get(key)
+        alt = self.sensors.get(FALLBACKS.get(key, ""))
+        if alt and (eid is None or self.hass.states.get(eid) is None) and self.hass.states.get(alt) is not None:
+            return alt
+        return eid
+
     def _sample(self, ts: float) -> Sample:
         get = self.hass.states.get
         s = self.sensors
         missing = []
-
-        def fresh(st):
-            reported = getattr(st, "last_reported", None) or getattr(st, "last_updated", None)
-            return reported is None or ts - reported.timestamp() <= STALE_S
 
         def num(key):
             eid = s.get(key)
             st = get(eid) if eid else None
             v = _float(st)
             if key in CORE_KEYS.values() and key != "ulko":
-                # a frozen Modbus value must not look like steady running: Home Assistant refreshes
-                # last_reported on every poll even when the value does not change
-                if v is not None and not fresh(st):
+                # a frozen Modbus value must not look like steady running
+                if v is not None and not self.fresh(eid, st, ts):
                     v = None
                 if v is None:
                     missing.append(eid or key)
@@ -273,7 +305,7 @@ class Runner:
             eid = s.get(key)
             st = get(eid) if eid else None
             v = _float(st)
-            if v is None or not fresh(st):
+            if v is None or not self.fresh(eid, st, ts):
                 return None
             unit = st.attributes.get("unit_of_measurement")
             return v / 1000 if unit == "W" or (unit is None and key == "vesilampo" and v > 100) else v
@@ -286,13 +318,14 @@ class Runner:
             t_out = _float(get(s["ulko_varalla"]))
         if t_out is None:
             missing.append(s.get("ulko") or "ulko")
-        comp = get(s["kompressori"]) if s.get("kompressori") else None
+        comp_eid, dfr_eid = self.role_entity("kompressori"), self.role_entity("sulatus")
+        comp = get(comp_eid) if comp_eid else None
         comp_on = comp is not None and comp.state == "on"
-        dfr = get(s["sulatus"]) if s.get("sulatus") else None
+        dfr = get(dfr_eid) if dfr_eid else None
         defrost = dfr is not None and dfr.state == "on"
-        for key, st in (("kompressori", comp), ("sulatus", dfr)):
-            if st is None or st.state not in ("on", "off") or not fresh(st):
-                missing.append(s.get(key) or key)
+        for key, eid, st in (("kompressori", comp_eid, comp), ("sulatus", dfr_eid, dfr)):
+            if st is None or st.state not in ("on", "off") or not self.fresh(eid, st, ts):
+                missing.append(eid or key)
         p_el = kw("sahko")
         if p_el is None:
             missing.append(s.get("sahko"))
@@ -321,10 +354,103 @@ class Runner:
             missing=tuple(m for m in missing if m),
         )
         self.invalid = list(dict.fromkeys(sample.missing))
-        self.missing = [eid for eid in [*self.sensors.values(), *self.faults] if eid and get(eid) is None]
+        self.missing = self._missing_entities()
         return sample
+
+    def _missing_entities(self) -> list[str]:
+        """Configured entities that do not exist. A role covered by its stand-in is not missing."""
+        get = self.hass.states.get
+        stand_ins = set(FALLBACKS.values())
+        out = []
+        for key, eid in self.sensors.items():
+            if not eid or key in stand_ins or get(eid) is not None:
+                continue
+            alt = self.sensors.get(FALLBACKS.get(key, ""))
+            if alt and get(alt) is not None:
+                continue
+            out.append(eid)
+        return out + [eid for eid in self.faults if eid and get(eid) is None]
 
     # ------------------------------------------------------------------ for entities
     def eta_now(self):
         pts = [p.eta for p in list(self.brain.points)[-15:] if p.stable and p.eta is not None]
         return median(pts)
+
+    def blockers(self) -> list[dict]:
+        """What keeps the AI from acting right now, most important first, and what to do about it.
+
+        taso: virhe = needs the owner, odottaa = clears by itself, tieto = by design.
+        """
+        b = self.brain
+        out: list[dict] = []
+
+        def add(taso: str, koodi: str, teksti: str, korjaus: str | None = None) -> None:
+            out.append({"taso": taso, "koodi": koodi, "teksti": teksti, "korjaus": korjaus})
+
+        if self.last_tick is None:
+            add("odottaa", "kaynnistyy", "Odottaa Home Assistantin käynnistymistä ja ensimmäisiä mittauksia.")
+            return out
+        if b.mode == MODE_OFF:
+            add("tieto", "pois", "EEV-säätö on pois päältä.", "Valitse tila Tarkkailu, Ehdota tai Automaattinen.")
+        elif b.mode == MODE_OBSERVE:
+            add("tieto", "tarkkailu", "Tarkkailutila: tekoäly ei muuta mitään, se kertoo vain, mitä tekisi.",
+                "Vaihda tilaksi Ehdota tai Automaattinen, kun suunnitelmat näyttävät järkeviltä.")
+        if self.invalid:
+            add("virhe", "mittaukset", "Pakollinen mittaus puuttuu tai ei päivity: " + ", ".join(self.invalid) + ".",
+                "Tarkista entiteetti Kehittäjätyökaluissa. Jos nimesi on eri, vaihda se anturit:-kohtaan.")
+        eev_keys = [*MIN_OD, *SV]
+        found = sum(1 for k in eev_keys if k in self.overrides or k in self._entities)
+        usable = sum(1 for k in eev_keys if (p := b.params.get(k)) is not None and p.available)
+        if found == 0:
+            add("virhe", "mango_puuttuu", "Mango Tuya Local -integraation EEV-parametreja (Heat Min OD, Heat Sv) "
+                "ei löydy, joten tekoäly ei voi säätää.",
+                "Asenna Mango Tuya Local ja varmista, että EEV Set -parametrit näkyvät entiteetteinä.")
+        elif usable < found:
+            add("odottaa" if usable else "virhe", "mango_saatavilla",
+                f"Mango-parametreista saatavilla {usable}/{found}.",
+                "Mango lukee parametreja kierroksittain. Jos luku ei nouse, tarkista Mango-yhteys ja ettei "
+                "entiteettejä ole poistettu käytöstä.")
+        if b.paused_until > b.now:
+            add("odottaa", "tauko", f"Tauko {_local(b.paused_until)} asti: {b.pause_reason}.")
+        if b.queue:
+            add("odottaa", "palautus", "Palauttaa arvoja: "
+                + ", ".join(f"{q['key'].split('|')[-1]} → {q['value']}" for q in b.queue) + ".")
+        n, need = b.steady_minutes()
+        last = b.points[-1] if b.points else None
+        reported = self.invalid and last is not None and last.why == "puuttuu"  # already listed above
+        if b.action is None and b.mode != MODE_OFF and n < need and not reported:
+            why = b.waiting_reason()
+            add("odottaa", "tasainen", f"Tasaista käyntiä {n}/{need} min" + (f": {why}." if why else "."),
+                "Päätökset tehdään vain tasaisesta käynnistä. Lyhyiden käyntijaksojen tasaiset minuutit "
+                "lasketaan yhteen samoissa oloissa.")
+        if b.action is None and b.cooldown_until > b.now and b.mode in (MODE_PROPOSE, MODE_AUTO):
+            add("odottaa", "jaahdyttely", f"Seuraava muutos aikaisintaan {_local(b.cooldown_until)}.")
+        if not b._budget_ok() and b.mode in (MODE_PROPOSE, MODE_AUTO):
+            add("odottaa", "kirjoitusraja", f"Kirjoitusraja {b.s.writes_per_day}/vrk on täynnä.")
+        if b.pending:
+            add("tieto", "ehdotus", f"Ehdotus odottaa hyväksyntää: {b.pending['title']}.",
+                "Hyväksy tai hylkää ehdotus.")
+        if (b.action is None and b.mode != MODE_OFF and n >= need and b.suggestion is None and not b.pending
+                and not self.invalid):
+            eta = self.eta_now()
+            if eta is not None and eta >= b.wet_eta:
+                add("tieto", "ei_korjattavaa", "Imukaasu on märkää, mutta säädettävää ei nyt ole: parametrit ovat "
+                    "rajoillaan tai tauolla edellisen kokeilun jälkeen.")
+            else:
+                level = "" if eta is None else (f" (näennäinen hyötysuhde {round(eta * 100)} %, märkä yli "
+                                                f"{round(b.wet_eta * 100)} %)")
+                add("tieto", "ei_korjattavaa", f"Ei säädettävää: imukaasu ei ole märkää{level}.")
+        d = b.defrost
+        if d.mode in (MODE_PROPOSE, MODE_AUTO) and b.s.enable_defrost and self.force_entity() is None:
+            add("virhe", "pakkosulatus", "Pakkosulatusskriptiä ei löydy, joten tekoäly ei voi käynnistää sulatusta.",
+                "Lisää mango_cop_ai:-kohtaan rivi pakkosulatus: ja skriptisi entiteetti-id, esimerkiksi "
+                "script.sulatus_pakotettu_moduuli_0.")
+        if d.view.get("blocked") and d.mode != MODE_OFF:
+            add("odottaa", "sulatus_estetty", f"Sulatus olisi tarpeen, mutta: {d.view['blocked']}.")
+        return out
+
+
+def _local(ts: float) -> str:
+    """Local time of a timestamp: 14:05, or 28.10. 14:05 when not today."""
+    t = dt_util.as_local(datetime.fromtimestamp(ts, UTC))
+    return t.strftime("%H:%M") if t.date() == dt_util.now().date() else t.strftime("%d.%m. %H:%M")

@@ -34,8 +34,20 @@ from .analysis import (
     median,
     metrics,
     quantile,
+    why_text,
 )
-from .const import EEV_MAX_STEP, MIN_OD, MODE_AUTO, MODE_OBSERVE, MODE_OFF, MODE_PROPOSE, MODES, SV, TABLES
+from .const import (
+    EEV_MAX_STEP,
+    MIN_OD,
+    MODE_AUTO,
+    MODE_OBSERVE,
+    MODE_OFF,
+    MODE_PROPOSE,
+    MODES,
+    SV,
+    TABLES,
+    initial_mode,
+)
 from .defrost import Defrost
 
 MINUTE, HOUR, DAY = 60.0, 3600.0, 86400.0
@@ -58,6 +70,9 @@ PROPOSAL_TTL = 12 * HOUR
 APPROVAL_TTL = DAY
 ANOMALY_REPEAT = 6 * HOUR
 FAILED_RETRY = 7 * DAY
+# steady minutes of earlier compressor runs (up to LOOKBACK x window_min back, same conditions) top up
+# the decision window when the unit runs in short cycles
+LOOKBACK = 4
 
 
 @dataclass
@@ -122,10 +137,11 @@ def pct(value):
 
 class Brain:
     def __init__(self, settings: Settings | None = None, stored: dict | None = None,
-                 mode: str = MODE_OBSERVE, defrost_mode: str = MODE_OBSERVE):
+                 mode: str | None = None, defrost_mode: str | None = None):
+        """mode / defrost_mode: the modes written in configuration.yaml (None = not written)."""
         self.s = settings or Settings()
         st = stored or {}
-        self.mode = st.get("mode") if st.get("mode") in MODES else mode
+        self.mode, self.yaml_mode = initial_mode(st, mode)
         self.points: deque[Point] = deque(maxlen=420)
         self.originals: dict[str, int] = {k: int(v) for k, v in st.get("originals", {}).items()}
         self.managed: dict[str, int] = {k: int(v) for k, v in st.get("managed", {}).items()}
@@ -164,7 +180,7 @@ class Brain:
     # ------------------------------------------------------------------ persistence
     def to_dict(self) -> dict:
         return {
-            "mode": self.mode, "originals": self.originals, "managed": self.managed,
+            "mode": self.mode, "yaml_mode": self.yaml_mode, "originals": self.originals, "managed": self.managed,
             "hits": self.hits, "misses": self.misses, "backoff": self.backoff, "failed": self.failed,
             "limits": self.limits,
             "action": self.action, "queue": self.queue, "pending": self.pending,
@@ -391,6 +407,35 @@ class Brain:
         start = self.now - minutes * MINUTE
         return [p for p in self.points if p.t > start]
 
+    def _need(self) -> int:
+        """Steady minutes needed before deciding anything."""
+        return max(20, int(self.s.window_min * 0.6))
+
+    def _decision_window(self) -> list[Point]:
+        """The minutes a decision rests on: normally the last window_min minutes.
+
+        A big unit in mild weather runs in short cycles: 15 settling minutes after every start leave
+        too few steady minutes in any window_min. Then the steady minutes of the earlier runs in the
+        same conditions (outdoor within 2 K, supply water within 6 K, at most LOOKBACK x window_min
+        back) top the sample up, so that short runs are not a reason never to decide.
+        """
+        win = self._window(self.s.window_min)
+        need = self._need()
+        have = sum(1 for p in win if p.stable and p.eta is not None)
+        cur = self.points[-1] if self.points else None
+        if have >= need or cur is None or cur.t_out is None:
+            return win
+        start, cut = self.now - LOOKBACK * self.s.window_min * MINUTE, self.now - self.s.window_min * MINUTE
+        older = [p for p in self.points if start < p.t <= cut and p.stable and p.eta is not None
+                 and p.t_out is not None and abs(p.t_out - cur.t_out) <= 2.0
+                 and (p.t_sup is None or cur.t_sup is None or abs(p.t_sup - cur.t_sup) <= 6.0)]
+        return older[-(need - have):] + win
+
+    def steady_minutes(self) -> tuple[int, int]:
+        """(steady minutes available for a decision, minutes needed)."""
+        n = sum(1 for p in self._decision_window() if p.stable and p.eta is not None)
+        return n, self._need()
+
     def _steps_per_pct(self) -> float:
         if self.s.eev_full_steps:
             return self.s.eev_full_steps / 100
@@ -614,10 +659,9 @@ class Brain:
     # ------------------------------------------------------------------ proposals
     def _find_proposal(self) -> dict | None:
         floors = self._floors()
-        win = self._window(self.s.window_min)
+        win = self._decision_window()
         m = metrics(win, self.wet_eta, floors)
-        need = max(20, int(self.s.window_min * 0.6))
-        if m.get("n", 0) < need or not win or win[0].t > self.now - (self.s.window_min - 2) * MINUTE:
+        if m.get("n", 0) < self._need() or not win or win[0].t > self.now - (self.s.window_min - 2) * MINUTE:
             return None
         cond = {"t_out": m["t_out"], "t_sup": m["t_sup"]}
         before = {k: m.get(k) for k in ("eta_med", "wet_frac", "pinned_frac", "pinned_steps", "eev_med",
@@ -1141,15 +1185,21 @@ class Brain:
         elif self.approved:
             text = "Ehdotus hyväksytty, odottaa samaa tilannetta"
         else:
-            n = sum(1 for p in self._window(self.s.window_min) if p.stable)
-            need = max(20, int(self.s.window_min * 0.6))
+            n, need = self.steady_minutes()
             if n < need:
                 text = f"Odottaa tasaista käyntiä ({n}/{need} min)"
+                why = self.waiting_reason()
+                if why:
+                    text += f": {why}"
             elif self.suggestion and self.mode == MODE_OBSERVE:
                 text = f"Tarkkailee. Tekisin: {self.suggestion['title']}"
             else:
                 text = "Tarkkailee" if self.mode == MODE_OBSERVE else "Valvoo"
         self.status_text = text[:250]
+
+    def waiting_reason(self) -> str | None:
+        """Why the latest minute does not count as steady running (None = it does)."""
+        return why_text(self.points[-1]) if self.points else None
 
     def status(self) -> dict:
         a = self.action
@@ -1174,4 +1224,6 @@ class Brain:
             "history": [{**h, "key": short(h["key"]) if h.get("key") else None} for h in self.history[-8:]],
             "failed": {short(k): v["error"] for k, v in self.failed.items()},
             "paused_until": self.paused_until if self.paused_until > self.now else None,
+            "cooldown_until": self.cooldown_until if self.cooldown_until > self.now else None,
+            "budget_full": not self._budget_ok(),
         }

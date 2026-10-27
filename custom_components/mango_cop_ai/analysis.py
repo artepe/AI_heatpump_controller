@@ -125,6 +125,7 @@ class Point:
     fan: float | None = None
     defrost_changed: float | None = None
     force_ok: bool = False
+    why: str | None = None  # why this minute is not steady running (WHY codes), None when stable
 
     @property
     def t_air(self) -> float | None:
@@ -132,7 +133,33 @@ class Point:
         return self.t_amb if self.t_amb is not None else self.t_out
 
 
-CORE =("p_el", "rps", "te", "tc", "t_suc", "t_dis", "eev", "t_out", "t_sup")
+CORE = ("p_el", "rps", "te", "tc", "t_suc", "t_dis", "eev", "t_out", "t_sup")
+
+# Why a minute is not steady running, in the order derive() checks them. {n} = minutes.
+WHY = {
+    "puuttuu": "pakollinen mittaus puuttuu",
+    "vika": "vika- tai hälytystila",
+    "sulatus": "sulatus käynnissä",
+    "seis": "kompressori seis",
+    "kaynnistys": "kompressori käynnistyi {n} min sitten, tasaantuu 15 min",
+    "sulatuksen_jalkeen": "sulatuksesta {n} min, tasaantuu 20 min",
+    "teho": "kompressorin teho alle 0,3 kW",
+    "kierrokset": "kompressorin nopeus alle 12 rps",
+    "historia": "nopeuden vertailuhistoria kertyy",
+    "nopeus": "kompressorin nopeus muuttuu",
+    "buusti": "nopeus normaalia korkeampi (öljynpalautus tai nosto)",
+    "laskenta": "kylmäpiirin arvot laskenta-alueen ulkopuolella",
+}
+
+
+def why_text(p: Point | None) -> str | None:
+    """Plain-language reason for the minute not counting as steady running."""
+    if p is None or p.why is None:
+        return None
+    if p.why == "puuttuu" and p.missing:
+        return f"{WHY['puuttuu']}: {', '.join(p.missing)}"
+    n = p.comp_on_min if p.why == "kaynnistys" else p.since_defrost_min
+    return WHY.get(p.why, p.why).format(n=round(n or 0))
 
 
 def _num(*values) -> bool:
@@ -169,19 +196,43 @@ def derive(s: Sample, settings: Settings, history) -> Point:
         carnot = (s.t_sup + 273.15) / (s.t_sup - s.t_out)
     cop_kp = cyc.cop if cyc is not None and 0.45 <= cyc.eta <= 1.3 else None
 
-    steady = False
+    unsteady = "historia"
     if _num(s.rps):
         old = [p for p in history if p.t <= s.t - 240 and p.t >= s.t - 600 and p.rps is not None]
         recent = [p.rps for p in history if p.t >= s.t - 3600 and p.stable and p.rps is not None]
         base = median(recent)
-        steady = bool(old) and abs(s.rps - old[-1].rps) <= 2.0 and (base is None or s.rps <= base + 5.0)
-    stable = (
-        s.comp_on and not s.defrost and not s.fault and not s.missing and steady
-        and (s.comp_on_min or 0) >= 15
-        and (s.since_defrost_min is None or s.since_defrost_min >= 20)
-        and all(_num(getattr(s, name)) for name in CORE)
-        and s.p_el >= 0.3 and s.rps >= 12
-    )
+        if not old:
+            unsteady = "historia"
+        elif abs(s.rps - old[-1].rps) > 2.0:
+            unsteady = "nopeus"
+        elif base is not None and s.rps > base + 5.0:
+            unsteady = "buusti"
+        else:
+            unsteady = None
+    # the first reason that keeps this minute out of the steady-running data
+    if s.missing:
+        why = "puuttuu"
+    elif s.fault:
+        why = "vika"
+    elif s.defrost:
+        why = "sulatus"
+    elif not s.comp_on:
+        why = "seis"
+    elif (s.comp_on_min or 0) < 15:
+        why = "kaynnistys"
+    elif s.since_defrost_min is not None and s.since_defrost_min < 20:
+        why = "sulatuksen_jalkeen"
+    elif not all(_num(getattr(s, name)) for name in CORE):
+        why = "puuttuu"
+    elif s.p_el < 0.3:
+        why = "teho"
+    elif s.rps < 12:
+        why = "kierrokset"
+    else:
+        why = unsteady
+    stable = why is None
+    if stable and cyc is None:
+        why = "laskenta"  # steady, but the refrigerant cycle cannot be evaluated: not usable for decisions
     return Point(
         t=s.t, stable=stable, comp_on=s.comp_on, defrost=s.defrost, fault=s.fault, heater=s.heater,
         rps=s.rps, p_el=s.p_el, eev=s.eev, te=s.te, tc=s.tc, t_out=s.t_out, t_sup=s.t_sup,
@@ -197,7 +248,7 @@ def derive(s: Sample, settings: Settings, history) -> Point:
         appr_c=(s.tc - s.t_sup) if _num(s.tc, s.t_sup) else None,
         frost=s.frost, comp_on_min=s.comp_on_min, since_defrost_min=s.since_defrost_min,
         missing=s.missing, t_ret=s.t_ret, t_fin=s.t_fin, t_amb=s.t_amb, ffd=s.ffd, flow=s.flow, fan=s.fan,
-        defrost_changed=s.defrost_changed, force_ok=s.force_ok,
+        defrost_changed=s.defrost_changed, force_ok=s.force_ok, why=why,
     )
 
 

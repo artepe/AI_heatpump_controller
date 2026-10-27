@@ -11,7 +11,12 @@ Home Assistantin integraatio, joka toimii Raspberry Pi:llä HA:n sisällä. Se v
 
 1. Asenna integraatio jommallakummalla tavalla:
    - **HACS:** lisää `https://github.com/artepe/AI_heatpump_controller` mukautetuksi repositorioksi (tyyppi Integraatio) ja lataa **AI Heat Pump Controller**.
-   - **Käsin:** lataa `mango_cop_ai_<versio>.zip` [Releases-sivulta](https://github.com/artepe/AI_heatpump_controller/releases) ja pura se Home Assistantin `config`-kansioon niin, että syntyy kansio `config/custom_components/mango_cop_ai/`. Voit käyttää Samba-jakoa, File editoria tai Terminal & SSH -lisäosaa: `cd /config && unzip -o mango_cop_ai_1.1.1.zip`.
+   - **Käsin, Terminal & SSH -lisäosassa:** lataa uusin zip [Releases-sivulta](https://github.com/artepe/AI_heatpump_controller/releases) ja pura se `config`-kansioon niin, että syntyy kansio `config/custom_components/mango_cop_ai/`:
+
+     ```bash
+     cd /config && curl -fsSL -o /tmp/mango_cop_ai.zip https://github.com/artepe/AI_heatpump_controller/releases/download/v1.2.0/mango_cop_ai_1.2.0.zip && unzip -o /tmp/mango_cop_ai.zip && ha core check && ha core restart
+     ```
+
 2. Lisää `configuration.yaml`:n loppuun yksi rivi:
 
    ```yaml
@@ -19,14 +24,63 @@ Home Assistantin integraatio, joka toimii Raspberry Pi:llä HA:n sisällä. Se v
    ```
 
 3. Kehittäjätyökalut → YAML → Tarkista asetukset, ja käynnistä HA uudelleen.
-4. Lisää kojelautaan [`examples/kortti.yaml`](examples/kortti.yaml): Muokkaa kojelautaa → Lisää kortti → Manuaalinen → liitä. Zip-paketissa sama kortti on integraation kansiossa nimellä `kortti.yaml`.
-   Teknisempi kortti on [`examples/kortti_tekninen.yaml`](examples/kortti_tekninen.yaml): COP kummaltakin puolelta, imun märkyys, käynnissä oleva toimenpide, EEV:n 9 vyöhykkeen taulukko tekoälyn muutoksineen, kylmäpiirin arvot, käyrät ja päätöshistoria. Fontti on tasalevyinen, jos card-mod on asennettu.
+4. Lisää kojelautaan kortti: Muokkaa kojelautaa → Lisää kortti → hae **COP-tekoäly**, tai Manuaalinen → `type: custom:cop-tekoaly-card`. Katso [Kojelautakortti](#kojelautakortti).
+   Markdown-pohjainen teknisempi kortti on edelleen [`examples/kortti_tekninen.yaml`](examples/kortti_tekninen.yaml): COP kummaltakin puolelta, imun märkyys, käynnissä oleva toimenpide, EEV:n 9 vyöhykkeen taulukko tekoälyn muutoksineen, kylmäpiirin arvot, käyrät ja päätöshistoria. Fontti on tasalevyinen, jos card-mod on asennettu.
+
+## Kojelautakortti
+
+Integraatio tuo mukanaan oman kortin ja lataa sen itse jokaiselle kojelaudalle. Resurssia ei tarvitse lisätä, eikä HACS-korttia asentaa.
+
+```yaml
+type: custom:cop-tekoaly-card
+```
+
+Kortti näyttää ylhäältä alas:
+
+- mitä tekoäly tekee nyt, ja diagnoosin, kun siinä on jotain kerrottavaa
+- odottavan ehdotuksen ja painikkeet **Hyväksy ehdotus** ja **Hylkää**
+- **Miksi tekoäly ei säädä nyt**: jokainen este omalla rivillään ja mitä asialle voi tehdä. *Korjaa* tarkoittaa, että asia vaatii sinulta toimia, *Odottaa* korjaantuu itsestään ja *Tieto* johtuu valitusta tilasta.
+- imukaasun märkyyden näkölasin: kompressorin näennäinen hyötysuhde, kuivan imun taso ja märkäraja. Kun imu on märkää, lasi täyttyy kylmäaineen sinisellä.
+- COP:n, laatuasteen, poikkeaman opitusta tasosta ja kirjoitukset 24 h. Lukemaa napauttamalla avautuu historia.
+- EEV-säädön ja sulatusohjauksen tilat (Pois, Tarkkailu, Ehdota, Automaattinen)
+- ulkoyksikön kennon tilan, sulatustarpeen ja viimeisimmän sulatuksen
+- tekoälyn muuttamat arvot ja viimeisimmät päätökset
+- **Palauta alkuperäiset**, kun palautettavaa on. Painike kysyy vahvistuksen toisella painalluksella.
+
+Valinnat:
+
+```yaml
+type: custom:cop-tekoaly-card
+title: VILP-tekoäly       # otsikko, oletus "COP-tekoäly"
+show_controls: true       # tilat, hyväksy/hylkää ja palautus
+show_defrost: true        # kennon ja sulatuksen tila
+show_history: true        # päätöshistoria
+```
+
+## Jos tekoäly ei tee mitään
+
+Katso kortin kohta **Miksi tekoäly ei säädä nyt**. Sama luettelo on anturin `sensor.cop_tekoaly_tilanne` attribuutissa `esteet`. Yleisimmät syyt:
+
+| Este | Mitä tehdä |
+|---|---|
+| Tarkkailutila | Tarkkailu ei muuta mitään, se kertoo vain lokikirjassa, mitä tekisi. Vaihda tilaksi Ehdota tai Automaattinen. |
+| Pakollinen mittaus puuttuu tai ei päivity | Entiteetin nimi on eri kuin oletus tai sitä ei ole. Korjaa nimi `anturit:`-kohtaan. |
+| Mango-parametreja ei löydy tai saatavilla x/y | Mango Tuya Local ei ole asennettu, sen EEV Set -parametrit on poistettu käytöstä tai yhteys laitteeseen puuttuu. |
+| Tasaista käyntiä n/27 min | Päätökset tehdään vain tasaisesta käynnistä. Rivillä lukee, miksi nykyinen minuutti ei kelpaa, esimerkiksi kompressori käynnistyi juuri tai sulatus on käynnissä. |
+| Seuraava muutos aikaisintaan / kirjoitusraja | Edellisen muutoksen jälkeinen tauko tai 12 kirjoitusta vuorokaudessa täynnä. |
+| Ei säädettävää | Imukaasu ei ole märkää, joten korjattavaa ei ole. |
+
+Versio 1.2.0 korjasi kolme vikaa, joiden takia tekoäly saattoi jäädä odottamaan ikuisesti:
+
+- **Muutoksista raportoivat anturit tulkittiin vanhentuneiksi.** Template-, ESPHome- ja MQTT-anturit kirjoittavat tilansa vain, kun se muuttuu. Tunteja pois päällä ollut sulatusanturi näytti siksi vanhentuneelta, ja jokainen minuutti hylättiin. Nyt ikäraja koskee vain lähteitä, jotka toistavat muuttumattoman arvon, kuten Modbusia.
+- **Sulatusanturin nimi.** Jos `binary_sensor.hp_defrost_active` puuttui, kaikki pysähtyi. Nyt tilalla käytetään Modbusin sulatusventtiiliä `binary_sensor.hp_m0_defrost_venttiili`.
+- **Lyhyet käyntijaksot.** Lauhalla säällä kompressori käy esimerkiksi 40 min ja seisoo 20 min. Jokainen käynnistys vie 15 min tasaantumiseen, joten 45 minuutin ikkunaan ei koskaan kertynyt 27 tasaista minuuttia. Nyt saman ulkolämmön aiempien käyntijaksojen tasaiset minuutit lasketaan yhteen.
 
 Mango Tuya Local -integraation pitää olla asennettuna ja parametrien näkyvissä. Tekoäly löytää number-entiteetit itse niiden tunnisteista, joten entiteetti-id:itä ei tarvitse kirjoittaa.
 
 ## Käyttö
 
-Tila valitaan entiteetillä **COP-tekoäly tila**. Oletuksena tekoäly käynnistyy tarkkailutilassa, ja sen jälkeen voimassa on viimeksi valittu tila myös uudelleenkäynnistysten yli.
+Tila valitaan kortista tai entiteetillä **COP-tekoäly tila**. Oletuksena tekoäly käynnistyy tarkkailutilassa, ja sen jälkeen voimassa on viimeksi valittu tila myös uudelleenkäynnistysten yli. Jos muutat `tila:`- tai `sulatus_tila:`-rivin arvoa `configuration.yaml`:ssa, uusi arvo otetaan käyttöön seuraavassa käynnistyksessä.
 
 | Tila | Mitä tekee |
 |---|---|
@@ -131,7 +185,7 @@ Jokainen sulatus kirjataan lokikirjaan, esimerkiksi:
 | Entiteetti | Sisältö |
 |---|---|
 | `select.cop_tekoaly_tila` | Pois / Tarkkailu / Ehdota / Automaattinen |
-| `sensor.cop_tekoaly_tilanne` | Mitä tekoäly tekee nyt. Attribuutteina kesken oleva toimenpide, muutetut arvot, opitut vyöhykkeet ja historia. |
+| `sensor.cop_tekoaly_tilanne` | Mitä tekoäly tekee nyt. Attribuutteina esteet (miksi se ei säädä nyt), kesken oleva toimenpide, muutetut arvot, opitut vyöhykkeet ja historia. |
 | `sensor.cop_tekoaly_diagnoosi` | Todennäköinen tila tai vika |
 | `sensor.cop_tekoaly_cop` | Tunnin COP (kylmäpiiri). Attribuutteina vesipuoli, Carnot ja odotettu COP. |
 | `sensor.cop_tekoaly_cop_poikkeama` | % opitusta tasosta |
@@ -149,8 +203,8 @@ Kaikki on valinnaista. Oletukset ovat tekijän Home Assistantin entiteettien nim
 
 ```yaml
 mango_cop_ai:
-  tila: Tarkkailu                 # EEV-säätö, vain ensimmäinen käynnistys
-  sulatus_tila: Tarkkailu         # sulatusohjaus, vain ensimmäinen käynnistys
+  tila: Tarkkailu                 # EEV-säätö: otetaan käyttöön, kun arvo muuttuu tässä
+  sulatus_tila: Tarkkailu         # sulatusohjaus: samoin
   # pakkosulatus: script.sulatus_pakotettu_moduuli_0   # oletuksena tämä tai "Sulatus pakotettu" -niminen
   anturit:                        # vaihda, jos nimesi ovat toiset
     sahko: sensor.invt_pout_power
@@ -170,6 +224,7 @@ mango_cop_ai:
     huurre: sensor.vilp_huurre_cop_havio
     kompressori: binary_sensor.hp_m0_kompressori_rele
     sulatus: binary_sensor.hp_defrost_active
+    sulatus_varalla: binary_sensor.hp_m0_defrost_venttiili  # käytetään, jos edellistä ei ole
     vastus: binary_sensor.hp_electric_heater
     lamelli: sensor.kylmaaine_lamellilampo_fin              # sulatus: kennon lämpö
     ulkoyksikko: sensor.hp_module_ambient_temperature      # sulatus: ulkoyksikön oma ulkoanturi
@@ -226,11 +281,14 @@ Jos jokin vikatila-anturi on normaalikäytössä päällä, poista se listalta. 
 
 `sensor.cop_tekoaly_mittausten_tila` näyttää tilan **Odottaa mittauksia**,
 **Kunnossa** tai **Puutteellinen**. Attribuutti `ohjauksen_estävät_mittaukset`
-luettelee puuttuvat, virheelliset tai vanhentuneet pakolliset mittaukset, ja
+luettelee puuttuvat, virheelliset tai jumiutuneet pakolliset mittaukset, ja
 `viimeisin_päivitys` kertoo viimeisimmän käsittelyajan. Valinnainen puuttuva
 anturi näkyy attribuutissa `puuttuvat_entiteetit`, mutta ei yksin estä ohjausta.
 
-Yli 15 minuuttia raportoimatta ollut sähköteho sekä kompressorin ja sulatuksen
-tilat estävät tasaiseksi käynniksi hyväksymisen. Myös tuntematon tai puuttuva
-kompressorin tai sulatuksen tila estää sen. Mittausten palautuessa seuranta
-jatkuu automaattisesti. Ulkolämpöantureihin tätä aikarajaa ei sovelleta.
+Jumiutunut lukema tunnistetaan vain lähteistä, jotka kirjoittavat arvonsa
+jokaisella kyselyllä silloinkin, kun se ei muutu, kuten Modbus. Jos tällainen
+lähde on ollut 15 minuuttia hiljaa, lukema ei kelpaa. Template-, ESPHome- ja
+MQTT-anturit kirjoittavat tilansa vain muuttuessaan, joten niiden pitkä hiljaisuus
+on normaalia eikä estä mitään. Myös tuntematon tai puuttuva kompressorin tai
+sulatuksen tila estää tasaiseksi käynniksi hyväksymisen. Mittausten palautuessa
+seuranta jatkuu automaattisesti.
