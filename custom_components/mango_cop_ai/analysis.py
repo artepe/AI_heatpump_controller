@@ -126,6 +126,7 @@ class Point:
     defrost_changed: float | None = None
     force_ok: bool = False
     why: str | None = None  # why this minute is not steady running (WHY codes), None when stable
+    quality: tuple[str, ...] = ()  # cross-check failures; never base an actuator write on these points
 
     @property
     def t_air(self) -> float | None:
@@ -149,6 +150,7 @@ WHY = {
     "nopeus": "kompressorin nopeus muuttuu",
     "buusti": "nopeus normaalia korkeampi (öljynpalautus tai nosto)",
     "laskenta": "kylmäpiirin arvot laskenta-alueen ulkopuolella",
+    "ristiriita": "antureissa ristiriita; automaattiset säädöt estetty",
 }
 
 
@@ -183,6 +185,32 @@ def quantile(values, q):
     return values[lo] + (values[hi] - values[lo]) * (pos - lo)
 
 
+def measurement_issues(s: Sample) -> tuple[str, ...]:
+    """Independent thermodynamic plausibility checks, without assuming a wet-suction model.
+
+    Only gate steady heating: during startup or defrost these relationships need not hold.
+    Treat anomalies as *sensor / mapping uncertainty*, not evidence of a specific fault.
+    """
+    if s.missing or not s.comp_on or s.defrost or (s.comp_on_min or 0) < 15:
+        return ()
+    issues: list[str] = []
+    if _num(s.tc, s.te) and s.tc - s.te < 8.0:
+        issues.append("Lauhtumis- ja höyrystymislämpötilan ero alle 8 K")
+    if _num(s.t_suc, s.te):
+        sh = s.t_suc - s.te
+        if sh < -1.5:
+            issues.append("Imulämpötila alle höyrystymisen kyllästyslämpötilan")
+        if sh >= 3.0 and _num(s.sh_act) and abs(sh - s.sh_act) > 3.0:
+            issues.append("Ohjaimen tulistus poikkeaa imu-/höyrystymisantureista yli 3 K")
+    if _num(s.t_dis, s.tc) and s.t_dis < s.tc + 0.5:
+        issues.append("Kuumakaasu ei ole lauhtumisen kyllästyslämpötilaa lämpimämpi")
+    if _num(s.t_sup, s.tc) and s.t_sup > s.tc + 5.0:
+        issues.append("Menovesi yli 5 K lauhtumisen kyllästyslämpötilaa lämpimämpi")
+    if _num(s.t_sup, s.t_ret) and s.t_ret > s.t_sup + 2.0:
+        issues.append("Paluuvesi yli 2 K menovettä lämpimämpi lämmityksessä")
+    return tuple(issues)
+
+
 def derive(s: Sample, settings: Settings, history) -> Point:
     """Turn a Sample into a Point. history = earlier Points, newest last."""
     cyc = None
@@ -209,6 +237,7 @@ def derive(s: Sample, settings: Settings, history) -> Point:
             unsteady = "buusti"
         else:
             unsteady = None
+    quality = measurement_issues(s)
     # the first reason that keeps this minute out of the steady-running data
     if s.missing:
         why = "puuttuu"
@@ -228,11 +257,14 @@ def derive(s: Sample, settings: Settings, history) -> Point:
         why = "teho"
     elif s.rps < 12:
         why = "kierrokset"
+    elif quality:
+        why = "ristiriita"
     else:
         why = unsteady
     stable = why is None
     if stable and cyc is None:
-        why = "laskenta"  # steady, but the refrigerant cycle cannot be evaluated: not usable for decisions
+        why = "laskenta"  # invalid refrigerant calculation must NEVER count as steady
+        stable = False
     return Point(
         t=s.t, stable=stable, comp_on=s.comp_on, defrost=s.defrost, fault=s.fault, heater=s.heater,
         rps=s.rps, p_el=s.p_el, eev=s.eev, te=s.te, tc=s.tc, t_out=s.t_out, t_sup=s.t_sup,
@@ -248,7 +280,7 @@ def derive(s: Sample, settings: Settings, history) -> Point:
         appr_c=(s.tc - s.t_sup) if _num(s.tc, s.t_sup) else None,
         frost=s.frost, comp_on_min=s.comp_on_min, since_defrost_min=s.since_defrost_min,
         missing=s.missing, t_ret=s.t_ret, t_fin=s.t_fin, t_amb=s.t_amb, ffd=s.ffd, flow=s.flow, fan=s.fan,
-        defrost_changed=s.defrost_changed, force_ok=s.force_ok, why=why,
+        defrost_changed=s.defrost_changed, force_ok=s.force_ok, why=why, quality=quality,
     )
 
 
