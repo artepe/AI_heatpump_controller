@@ -208,6 +208,12 @@ def measurement_issues(s: Sample) -> tuple[str, ...]:
         issues.append("Menovesi yli 5 K lauhtumisen kyllästyslämpötilaa lämpimämpi")
     if _num(s.t_sup, s.t_ret) and s.t_ret > s.t_sup + 2.0:
         issues.append("Paluuvesi yli 2 K menovettä lämpimämpi lämmityksessä")
+    if _num(s.flow, s.t_sup, s.t_ret, s.q_w) and s.flow > 100 and s.q_w > 0:
+        # Independent energy balance: l/h * K * 4.186 kJ/kg/K / 3600 = kW.
+        # A broad tolerance permits transient mixing and flow-meter uncertainty.
+        q_flow = max(0.0, s.flow * (s.t_sup - s.t_ret) * 4.186 / 3600)
+        if abs(s.q_w - q_flow) > max(2.0, 0.60 * max(s.q_w, q_flow)):
+            issues.append("Vesipuolen laskettu lämpöteho ei vastaa virtausta ja ΔT:tä")
     return tuple(issues)
 
 
