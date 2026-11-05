@@ -292,3 +292,13 @@ MQTT-anturit kirjoittavat tilansa vain muuttuessaan, joten niiden pitkä
 hiljaisuus on normaalia eikä estä mitään. Myös tuntematon tai puuttuva kompressorin tai
 sulatuksen tila estää tasaiseksi käynniksi hyväksymisen. Mittausten palautuessa
 seuranta jatkuu automaattisesti.
+
+## Mittausten ristivarmistus (turvaparannus)
+
+Ennen EEV- tai sulatussäätöä tekoäly vertaa imukaasun mitattua ja laskettua tulistusta, kuumakaasun ja lauhtumisen lämpötiloja, lauhtumista ja menovettä sekä vesipuolen lämpötehoa virtaamaan ja meno–paluu-erotukseen. Tarkistus tehdään vain vakiintuneessa lämmityskäynnissä, ei käynnistyksessä tai sulatuksessa.
+
+Ristiriitaisella datalla AI **ei aloita uusia ohjausmuutoksia**. Käynnissä oleva EEV-kokeilu keskeytetään ja kokeiluarvo palautetaan. `sensor.cop_tekoaly_mittausten_tila` näyttää silloin tilan **Ristiriita** ja mittausten poikkeamat löytyvät attribuutista `ristiriitaiset_mittaukset`. Tarkkaile myös `sensor.cop_tekoaly_tulistus_laskettu` (K) ja `sensor.cop_tekoaly_tulistus_ero` (mitattu miinus tavoite, K).
+
+Esimerkki Mango-sovelluksesta: imukaasu 11,7 °C − höyrystyminen 4,9 °C = 6,8 K, vaikka EEV:n tavoite on 0,2 K. Positiivinen mitattu tulistus ei yksin osoita märkää imua; laskennallista hyötysuhdearviota ei käytetä EEV:n kuivatusmuutoksen perusteena, jos imukaasun tulistus pysyy vähintään 3 K:ssa. Jos kuumakaasu jää alle lauhtumisen kyllästyslämpötilan tai menovesi selvästi ylittää sen, tarkista anturi- ja rekisterikytkennät ennen automaattista käyttöä.
+
+**Aloita Tarkkailu-tilassa.** Heat Sv -parametrien desimaalikerroin ja toimintavyöhykkeet eivät ole kaikilta osin valmistajan vahvistamia. Erityisissä laitteistoissa (esimerkiksi erillinen kuumakaasun tulistuksenpoisto) ristivarmistuksen raja-arvot pitää ensin validoida.
