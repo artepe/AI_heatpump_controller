@@ -542,7 +542,11 @@
     _footer(status) {
       const version = this._version || status.attributes.versio || "";
       const err = this._error ? `<div class="error" role="alert">${esc(this._error)}</div>` : "";
-      const restorable = Object.keys(status.attributes.muutetut_arvot || {}).length || status.attributes.toimenpide
+      // Defrost interval changes are restorable too, even when no EEV table is managed.
+      // Previously this hid the rollback button after a completed defrost-only adjustment.
+      const restorable = Object.keys(status.attributes.muutetut_arvot || {}).length
+        || Object.keys(this._attr("sensor.sulatus", "muutetut_sulatusvälit") || {}).length
+        || status.attributes.toimenpide
         || this._attr("sensor.sulatus", "toimenpide");
       if (!this._config.show_controls || !this._st("button.palauta") || !restorable) {
         return `${err}<div class="foot"><span></span><small>${esc(version && `v${version}`)}</small></div>`;
