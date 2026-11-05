@@ -1,7 +1,7 @@
 """Regression checks for live Mango R290 telemetry and safe EEV decisions."""
 
-from custom_components.mango_cop_ai.analysis import Sample, Settings, derive, measurement_issues
 from custom_components.mango_cop_ai import r290
+from custom_components.mango_cop_ai.analysis import Sample, Settings, derive, measurement_issues
 
 from .plant import OWNER_VALUES
 from .test_brain import Harness
