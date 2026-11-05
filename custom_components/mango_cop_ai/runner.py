@@ -406,6 +406,11 @@ class Runner:
         if self.invalid:
             add("virhe", "mittaukset", "Pakollinen mittaus puuttuu tai ei päivity: " + ", ".join(self.invalid) + ".",
                 "Tarkista entiteetti Kehittäjätyökaluissa. Jos nimesi on eri, vaihda se anturit:-kohtaan.")
+        point = b.points[-1] if b.points else None
+        if point is not None and point.quality:
+            add("virhe", "ristiriita", "Mittausristiriita: " + "; ".join(point.quality) + ".",
+                "Vertaile Mangon Status Overview -arvoja ja anturien kytkentöjä. AI ei tee uusia säätöjä "
+                "ennen kuin tiedot ovat johdonmukaisia.")
         eev_keys = [*MIN_OD, *SV]
         found = sum(1 for k in eev_keys if k in self.overrides or k in self._entities)
         usable = sum(1 for k in eev_keys if (p := b.params.get(k)) is not None and p.available)
