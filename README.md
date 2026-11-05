@@ -209,3 +209,13 @@ only when it comes from Modbus, which writes on every poll, and has been silent 
 from them is normal. Missing or unknown
 compressor/defrost states block stable operation. Monitoring resumes automatically
 when the readings recover.
+
+## Telemetry confidence / independent safety checks (proposed)
+
+The AI now cross-checks the measured suction superheat against suction and evaporating temperatures, rejects a physically implausible discharge/condensing-temperature relationship, checks condensing temperature against supply water, and compares reported water heat output with flow × water ΔT (when the necessary sensors exist). These checks apply to steady heating only, not startup or defrost.
+
+When the data contradict each other, **automatic EEV/defrost actions are blocked and an in-progress EEV tuning experiment is aborted and restored**. Diagnosis and blockers explain the conflict, but do not claim a particular faulty component. Fix temperature-sensor placement, scaling and entity mapping before using automatic mode. A desuperheater or other special hydraulic arrangement can require revisiting the conservative supply/condensation check.
+
+Two new Home Assistant sensors show `sensor.cop_tekoaly_tulistus_laskettu` (suction temperature minus evaporating saturation temperature) and `sensor.cop_tekoaly_tulistus_ero` (controller actual minus controller target, K). `sensor.cop_tekoaly_mittausten_tila` reports `Ristiriita` when the independent checks fail; details are in `ristiriitaiset_mittaukset` and the main status sensor's `esteet` attribute.
+
+**Important:** The Mango profile retains raw `Heat Sv` values; the AI assumes ten raw units per kelvin based on an observed Heat Sv5 trial, but the Tuya profile does not yet certify the scale for every operating zone. Apparent compressor isentropic efficiency is a *screening signal*, not proof of liquid at the compressor. The AI will not act on a wetness inference if measured suction temperatures are consistently at least 3 K superheated. Start in **Tarkkailu** and verify several steady operating points before approving any write.

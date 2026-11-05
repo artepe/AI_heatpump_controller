@@ -207,6 +207,10 @@ class Brain:
             # learned COP level and lets the diagnosis name frost
             point.frost = round(self.defrost.cycle["loss"] * 100, 1)
         self._monitor(point, out)
+        if point.quality and self.action is not None:
+            # Do not complete a tuning experiment using contradictory sensor readings.
+            # Existing managed values are preserved; the active trial is rolled back.
+            self._abort(self.action, "ristiriitaiset mittaukset: " + "; ".join(point.quality), out)
         if self.resume:
             self.resume = False
             self._resume(out)
@@ -220,7 +224,7 @@ class Brain:
             out += self._advance(point)
         elif self.mode != MODE_OFF and point.stable:
             out += self._consider()
-        if not any(isinstance(c, Write | Force) for c in out):
+        if not point.quality and not any(isinstance(c, Write | Force) for c in out):
             out += self.defrost.act(point)
         self._expire()
         self._update_status()
@@ -625,11 +629,18 @@ class Brain:
         if (point.comp_on_min or 0) < 15 or (point.since_defrost_min is not None
                                               and point.since_defrost_min < 20):
             return d("tasaantuu", "Käynnistys tai sulatus juuri ohi, odotetaan tasaista käyntiä")
+        if point.quality:
+            return d("mittausristiriita", "Ristiriitaiset anturitiedot – AI ei muuta asetuksia: "
+                     + "; ".join(point.quality), havainnot=list(point.quality))
         m = metrics(self._window(20), self.wet_eta, self._floors())
         if m.get("n", 0) < 10:
             return d("tasaantuu", "Käynti ei ole vielä tasaista")
         info = {"näennäinen_hyötysuhde": round(m["eta_med"], 2), "märkänä": pct(m["wet_frac"]),
                 "eev_askeleet": m.get("eev_med")}
+        sh = median(p.sh for p in self._window(20) if p.stable)
+        if m["wet_frac"] >= 0.5 and sh is not None and sh >= 3.0:
+            return d("markyys_epavarma", f"Imukaasu tulistunut {fmt(sh, 1)} K, mutta laskennallinen "
+                     "hyötysuhde viittaa märkään: tarkista mittaukset, ei EEV-korjausta", **info)
         if m["wet_frac"] >= 0.5:
             if m["pinned_frac"] >= 0.6:
                 return d("marka_imu_minimi",
@@ -672,6 +683,12 @@ class Brain:
                      and h["t"] > self.now - DAY for h in self.history)
         wet_start = m["wet_frac"] >= 0.6 and m["eta_med"] >= self.wet_eta
         wet = wet_start or (drying and m["eta_med"] >= self.eta_ref + self.s.continue_margin)
+        # A modelled wet indicator is not enough to override a consistently positive
+        # independently calculated suction superheat. Never dry a demonstrably superheated suction.
+        sh_values = [p.sh for p in win if p.stable and p.sh is not None]
+        if sh_values and len(sh_values) >= self._need() and (
+                sum(sh >= 3.0 for sh in sh_values) / len(sh_values) >= 0.8):
+            wet = False
         state = "Imukaasu on märkää" if wet_start else "Imukaasu on yhä märän rajalla, kuivatusta jatketaan"
         evidence = (f"näennäinen hyötysuhde {fmt(m['eta_med'])}, kuivan imun taso {fmt(self.eta_ref)}, "
                     f"märkänä {pct(m['wet_frac'])} ajasta, "

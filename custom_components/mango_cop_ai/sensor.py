@@ -22,6 +22,22 @@ def _ts(t):
     return None if not t else datetime.fromtimestamp(t, UTC).isoformat()
 
 
+def _quality(runner):
+    p = runner.brain.points[-1] if runner.brain.points else None
+    return list(p.quality) if p is not None else []
+
+
+def _sh_attr(runner, kind):
+    p = runner.brain.points[-1] if runner.brain.points else None
+    if p is None:
+        return None
+    if kind == "laskettu":
+        return _r(p.sh, 1)
+    if kind == "virhe":
+        return _r(p.sh_act - p.sh_tgt, 1) if p.sh_act is not None and p.sh_tgt is not None else None
+    return None
+
+
 def _status_attrs(runner):
     b = runner.brain
     st = b.status()
@@ -52,6 +68,7 @@ def _status_attrs(runner):
         "märkäraja": _r(b.wet_eta),
         "puuttuvat_entiteetit": runner.missing,
         "ohjauksen_estävät_mittaukset": runner.invalid,
+        "ristiriitaiset_mittaukset": _quality(runner),
         "viimeisin_päivitys": _ts(runner.last_tick),
         "mango_parametrit_löytyi": len(runner._entities),
         "mango_parametrit_saatavilla": sum(1 for p in b.params.values() if p.available),
@@ -135,8 +152,10 @@ SENSORS: list[tuple[str, str, str, str | None, Callable, Callable | None]] = [
     ("tilanne", "COP-tekoäly tilanne", "mdi:robot", None,
      lambda r: r.brain.status_text, _status_attrs),
     ("mittausten_tila", "COP-tekoäly mittausten tila", "mdi:database-check", None,
-     lambda r: "Odottaa mittauksia" if r.last_tick is None else ("Puutteellinen" if r.invalid else "Kunnossa"),
+     lambda r: "Odottaa mittauksia" if r.last_tick is None else (
+         "Puutteellinen" if r.invalid else "Ristiriita" if _quality(r) else "Kunnossa"),
      lambda r: {"ohjauksen_estävät_mittaukset": r.invalid, "puuttuvat_entiteetit": r.missing,
+                "ristiriitaiset_mittaukset": _quality(r),
                 "viimeisin_päivitys": _ts(r.last_tick)}),
     ("diagnoosi", "COP-tekoäly diagnoosi", "mdi:stethoscope", None,
      lambda r: r.brain.diagnosis["text"][:250],
@@ -147,6 +166,10 @@ SENSORS: list[tuple[str, str, str, str | None, Callable, Callable | None]] = [
      lambda r: _r(r.brain.cop.get("deviation_pct"), 1), None),
     ("cop_laatuaste", "COP-tekoäly COP-laatuaste", "mdi:gauge", PERCENTAGE,
      lambda r: _r(None if (v := _primary(r, "lq_kp", "lq_w")) is None else v * 100, 1), None),
+    ("tulistus_laskettu", "COP-tekoäly laskettu imutulistus", "mdi:thermometer-check", "K",
+     lambda r: _sh_attr(r, "laskettu"), None),
+    ("tulistus_ero", "COP-tekoäly tulistustavoitteen poikkeama", "mdi:delta", "K",
+     lambda r: _sh_attr(r, "virhe"), None),
     ("naennainen_hyotysuhde", "COP-tekoäly näennäinen hyötysuhde", "mdi:water-percent", PERCENTAGE,
      lambda r: _r(None if (v := r.eta_now()) is None else v * 100, 1),
      lambda r: {"kuivan_imun_taso_pros": _r(r.brain.eta_ref * 100, 1),
@@ -208,7 +231,7 @@ class StatusSensor(AiSensor):
         "historia", "hylätyt_parametrit", "tauko_asti", "kuivan_imun_taso", "märkäraja",
         "puuttuvat_entiteetit", "mango_parametrit_löytyi", "mango_parametrit_saatavilla", "koodi",
         "näennäinen_hyötysuhde", "märkänä",
-        "eev_askeleet", "ohjauksen_estävät_mittaukset", "viimeisin_päivitys",
+        "eev_askeleet", "ohjauksen_estävät_mittaukset", "ristiriitaiset_mittaukset", "viimeisin_päivitys",
         "viimeisimmät", "sulatuksia_24h", "tekoälyn_sulatuksia_24h", "arviot_24h",
         "sulatusenergia_24h_kwh", "kaistat_7vrk", "sulatusväli_kaistoittain", "säätimen_sulatusparametrit",
         "muutetut_sulatusvälit", "suositukset", "oma_huurrekynnys_k", "pakkosulatus_skripti",
