@@ -7,6 +7,19 @@ Home Assistantin integraatio, joka toimii Raspberry Pi:llä HA:n sisällä. Se v
 - **Sulattaa kennon, kun huurretta on kertynyt.** Huurteen määrä mitataan jatkuvasti, sulatus käynnistetään omalla pakkosulatusskriptilläsi, jokainen sulatus arvioidaan, ja säätimen omaa sulatusväliä säädetään. Katso [Sulatusohjaus](#sulatusohjaus).
 - **Ei koske muuhun.** Varaajan lämpötila, kompressorin nopeudet, puhallin, pumppu, suojaukset ja sulatuksen lämpötilakynnykset jäävät rauhaan.
 
+
+## Mango-integraation kirjoitusoikeus (0.2.2+)
+
+Mango Tuya Local on paivityksen jalkeen oletuksena **vain luku** -tilassa.
+Pelkan AI-ohjaimen Automaattinen-tilan valitseminen ei avaa kirjoitusoikeutta.
+Kun haluat sallia ohjaimen asetusten muuttamisen, avaa Home Assistantissa
+**Asetukset → Laitteet ja palvelut → Mango Tuya Local → Määritä**, ota
+**Salli asetusarvojen kirjoitukset** kayttoon ja tallenna. Voit poistaa luvan
+samasta valikosta. AI:n Pois/Tarkkailu/Ehdota/Automaattinen-tilat toimivat
+edelleen erikseen. Jos kirjoitusoikeus on pois, AI:n palautusyritys voi
+myos estya. Tarkista laitteesta asetukset ennen eston kytkemista, jos AI
+on jo ehtinyt tehda muutoksia. Pida laitteen omat turvatoiminnot paalla.
+
 ## Asennus (HA OS, Raspberry Pi)
 
 1. Asenna integraatio jommallakummalla tavalla:

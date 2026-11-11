@@ -66,8 +66,12 @@ class Rig:
                 self.hass.states.async_set(eid, old.state, old.attributes)
         self.registered = True
 
-    async def start(self, conf=None):
-        entry = MockConfigEntry(domain="mango_tuya_local", unique_id="TEST_DEVICE", title="Mango test", data=DATA)
+    async def start(self, conf=None, *, mango_writes=True):
+        # Simulate explicit opt-in in Mango Tuya Local 0.2.2+ for AI write tests.
+        entry = MockConfigEntry(
+            domain="mango_tuya_local", unique_id="TEST_DEVICE", title="Mango test",
+            data=DATA, options={"allow_writes": mango_writes},
+        )
         entry.add_to_hass(self.hass)
         assert await self.hass.config_entries.async_setup(entry.entry_id)
         await self.hass.async_block_till_done(wait_background_tasks=True)
@@ -450,3 +454,12 @@ def test_example_configuration_is_valid():
     assert validated["tila"] == "Tarkkailu"
     card = yaml.safe_load((EXAMPLES / "kortti.yaml").read_text(encoding="utf-8"))
     assert card["cards"][0] == {"type": "custom:cop-tekoaly-card"}
+
+async def test_mango_write_permission_off_blocks_automatic_ai_parameter_writes(
+        hass, freezer, mocked_client, hardware):
+    rig = await Rig(hass, freezer, hardware).start(
+        {"tila": "Automaattinen"}, mango_writes=False
+    )
+    await rig.run(3 * 60)
+    assert hardware.writes == 0
+    assert hardware.values[OD6] == 18

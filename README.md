@@ -15,6 +15,26 @@ integration over its simulated Tuya transport, with a simulated heat pump. The E
 been confirmed on a physical unit (Heat Sv5 changed the controller's superheat target as
 expected); the defrost control has not yet run on a physical unit.
 
+
+## Explicit write permission in Mango Tuya Local 0.2.2+
+
+This AI integrates with Mango Tuya Local, which now defaults to **read-only**
+parameter monitoring. Choosing the AI's automatic or proposal mode does
+**not** grant write access to the underlying heat pump.
+
+Before deliberately enabling EEV/defrost parameter changes, open **Settings
+→ Devices & services → Mango Tuya Local → Configure**, turn on **Enable
+parameter writes**, and save. Disable it again to return Mango to read-only.
+The AI's own Off / Observe / Propose / Automatic modes still apply.
+If Mango writes are disabled, control and rollback commands can fail;
+restore physically on the device when necessary and keep the controller's
+own thermal, compressor and defrost safeguards active.
+
+**Existing AI users:** if the AI already changed parameters, take a
+controller settings backup and verify the current live parameter values
+before disabling Mango write access. No unattended safety recovery can
+be guaranteed when writing is disabled or the device is offline.
+
 ## What it does
 
 - **Watches COP.** Computes COP from the refrigerant cycle (R290 enthalpies from pressures and
